@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: n2phone_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: n2phone
+      POSTGRES_USER: n2phone
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - n2phone_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n2phone -d n2phone"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  job-runner:
+    build:
+      context: .
+      dockerfile: job-runner/Dockerfile
+    container_name: n2phone_jobs
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TZ: America/Toronto
+      DATABASE_URL: postgres://n2phone:${POSTGRES_PASSWORD}@postgres:5432/n2phone
+      VERSATURE_BASE_URL: ${VERSATURE_BASE_URL}
+      VERSATURE_CLIENT_ID: ${VERSATURE_CLIENT_ID}
+      VERSATURE_CLIENT_SECRET: ${VERSATURE_CLIENT_SECRET}
+      VERSATURE_API_VERSION: ${VERSATURE_API_VERSION}
+      CONNECTWISE_BASE_URL: ${CONNECTWISE_BASE_URL}
+      CONNECTWISE_CLIENT_ID: ${CONNECTWISE_CLIENT_ID}
+      CONNECTWISE_PUBLIC_KEY: ${CONNECTWISE_PUBLIC_KEY}
+      CONNECTWISE_PRIVATE_KEY: ${CONNECTWISE_PRIVATE_KEY}
+      CONNECTWISE_COMPANY_ID: ${CONNECTWISE_COMPANY_ID}
+      CONNECTWISE_SOURCE_ID: ${CONNECTWISE_SOURCE_ID}
+      QUEUE_ENGLISH: ${QUEUE_ENGLISH}
+      QUEUE_FRENCH: ${QUEUE_FRENCH}
+      QUEUE_AI_OVERFLOW_EN: ${QUEUE_AI_OVERFLOW_EN}
+      QUEUE_AI_OVERFLOW_FR: ${QUEUE_AI_OVERFLOW_FR}
+      DNIS_PRIMARY: ${DNIS_PRIMARY}
+      DNIS_SECONDARY: ${DNIS_SECONDARY}
+    networks:
+      - n2phone_net
+    # Port 3001 is internal-only — not exposed to host
+
+networks:
+  n2phone_net:
+    driver: bridge
+
+volumes:
+  postgres_data:

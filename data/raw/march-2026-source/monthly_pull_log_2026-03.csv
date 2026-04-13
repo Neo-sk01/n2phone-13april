@@ -1,0 +1,2 @@
+id,month,status,started_at,completed_at,record_counts,error,progress_pct,progress_message,total_pages
+51,2026-03,completed,2026-04-13 09:16:28.244227+00,2026-04-13 09:24:10.515093+00,"{""cdrs"": 8241, ""tickets"": 256, ""queueStats"": 4}",,0,,

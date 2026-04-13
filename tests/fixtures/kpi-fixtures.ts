@@ -1,0 +1,32 @@
+export const cdrFixtures = [
+  {
+    id: 'cdr-1-a',
+    call_id: 'call-1',
+    start_time: '2026-04-01T13:00:00Z',
+    answer_time: null,
+    end_time: '2026-04-01T13:00:07Z',
+    duration: 7,
+    from: { number: '+16135550001', user: null, name: 'Caller 1', call_id: 'call-1' },
+    to: { id: '16135949199' },
+  },
+  {
+    id: 'cdr-1-b',
+    call_id: 'call-1',
+    start_time: '2026-04-01T13:00:04Z',
+    answer_time: '2026-04-01T13:00:03Z',
+    end_time: '2026-04-01T13:01:10Z',
+    duration: 67,
+    from: { number: '+16135550001', user: null, name: 'Caller 1', call_id: 'call-1' },
+    to: { id: '8020' },
+  },
+  {
+    id: 'cdr-2-a',
+    call_id: 'call-2',
+    start_time: '2026-04-01T14:00:00Z',
+    answer_time: '2026-04-01T14:00:01Z',
+    end_time: '2026-04-01T14:00:04Z',
+    duration: 4,
+    from: { number: '+16135550002', user: null, name: 'Caller 2', call_id: 'call-2' },
+    to: { id: '6135949199' },
+  },
+]

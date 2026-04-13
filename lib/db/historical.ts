@@ -1,0 +1,52 @@
+import { formatInTimeZone } from 'date-fns-tz'
+import { endOfMonth } from 'date-fns'
+import { getPool } from './client'
+
+const TZ = 'America/Toronto'
+
+/**
+ * Returns 'YYYY-MM' if startDate..endDate covers exactly one complete past
+ * calendar month AND pull_log shows 'completed' for that month.
+ * Returns null for partial months, the current month, or unfinished pulls.
+ */
+export async function detectHistoricalMonth(
+  startDate: string,
+  endDate: string,
+): Promise<string | null> {
+  // Must start on the 1st
+  const startMatch = startDate.match(/^(\d{4}-\d{2})-01/)
+  if (!startMatch) return null
+
+  const month = startMatch[1]
+  const [year, mo] = month.split('-').map(Number)
+
+  // Compute expected last day of month
+  const monthEnd = endOfMonth(new Date(year, mo - 1, 1))
+  const dd = String(monthEnd.getDate()).padStart(2, '0')
+
+  // endDate must cover the full last day
+  if (!endDate.startsWith(`${month}-${dd}`)) return null
+
+  // Must be strictly before the current Eastern month
+  const currentMonth = formatInTimeZone(new Date(), TZ, 'yyyy-MM')
+  if (month >= currentMonth) return null
+
+  // Check pull_log for a completed pull
+  const result = await getPool().query(
+    `SELECT 1 FROM monthly_pull_log WHERE month = $1 AND status = 'completed' LIMIT 1`,
+    [month],
+  )
+
+  return result.rows.length > 0 ? month : null
+}
+
+/** Returns the pre-computed KPI payload for a completed month, or null. */
+export async function readKPISnapshot(month: string): Promise<Record<string, unknown> | null> {
+  const result = await getPool().query(
+    'SELECT kpis FROM monthly_kpi_snapshots WHERE month = $1',
+    [month],
+  )
+
+  if (result.rows.length === 0) return null
+  return result.rows[0].kpis
+}

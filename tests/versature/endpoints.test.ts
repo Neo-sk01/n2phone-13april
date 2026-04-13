@@ -1,0 +1,26 @@
+import { describe, expect, test, vi } from 'vitest'
+
+vi.mock('@/lib/versature/client', () => ({
+  fetchAllPages: vi.fn().mockResolvedValue([{ id: 'cdr-1' }]),
+  versatureFetch: vi
+    .fn()
+    .mockResolvedValueOnce({ calls_offered: 10, abandoned_calls: 2 })
+    .mockResolvedValueOnce([{ interval: '2026-04-01T00:00:00Z', volume: 3 }])
+    .mockResolvedValueOnce([{ id: '8020', description: 'English queue' }]),
+}))
+
+describe('versature endpoints', () => {
+  test('wrap expected endpoint calls', async () => {
+    const { getDomainCdrs, getQueueStats, getQueueSplits, listQueues } = await import(
+      '@/lib/versature/endpoints'
+    )
+
+    expect(await getDomainCdrs('2026-04-01', '2026-04-01')).toEqual([{ id: 'cdr-1' }])
+    expect(await getQueueStats('8020', '2026-04-01', '2026-04-01')).toEqual({
+      calls_offered: 10,
+      abandoned_calls: 2,
+    })
+    expect(await getQueueSplits('8020', '2026-04-01', '2026-04-01', 'day')).toHaveLength(1)
+    expect(await listQueues()).toHaveLength(1)
+  })
+})
