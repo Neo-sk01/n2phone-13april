@@ -25,7 +25,7 @@ export async function fetchTickets(
       break
     }
 
-    const data: ConnectWiseTicket[] = await response.json()
+    const data = (await response.json()) as ConnectWiseTicket[]
 
     if (data.length === 0) {
       break
