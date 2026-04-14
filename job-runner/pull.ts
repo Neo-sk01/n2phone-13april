@@ -5,7 +5,8 @@ import { ENGLISH_QUEUE_ID, FRENCH_QUEUE_ID, AI_OVERFLOW_QUEUE_IDS } from '@/lib/
 import { getDashboardData } from '@/lib/kpis/get-dashboard-data'
 import { syncDay } from '@/lib/versature/sync'
 import { getPool } from './db'
-import { upsertCDRBatch, upsertQueueStats, upsertKPISnapshot, type QueueStatsRow } from './upsert'
+import { fetchTickets } from '@/lib/connectwise/client'
+import { upsertCDRBatch, upsertQueueStats, upsertTicketBatch, upsertKPISnapshot, upsertBhKpiSnapshot, type QueueStatsRow } from './upsert'
 
 const TZ = 'America/Toronto'
 
@@ -99,34 +100,40 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
 
   try {
     console.log(`[pull] Starting monthly pull for ${month} (${startDate} → ${endDate})`)
-
-    // === FETCH CDRs ===
-    // Pull day-by-day to stay under rate limits
-    const allCdrs: Awaited<ReturnType<typeof getDomainCdrs>> = []
     const days = eachDayOfInterval({
       start: new Date(`${startDate}T12:00:00`),
       end: new Date(`${endDate}T12:00:00`),
     })
+    const totalDays = days.length
 
-    for (const day of days) {
-      const dayStr = format(day, 'yyyy-MM-dd')
+    // === FETCH CDRs (0-30%) ===
+    const allCdrs: Awaited<ReturnType<typeof getDomainCdrs>> = []
+
+    for (let i = 0; i < days.length; i++) {
+      const dayStr = format(days[i], 'yyyy-MM-dd')
+      const pct = Math.round((i / totalDays) * 30)
+      await updateProgress(month, pct, `Fetching CDRs for ${dayStr}…`, totalDays)
+
       console.log(`[pull] Fetching CDRs for ${dayStr}…`)
       const dayCdrs = await getDomainCdrs(dayStr, dayStr)
       allCdrs.push(...dayCdrs)
       console.log(`[pull]   → ${dayCdrs.length} CDRs`)
-      // Pace between days to avoid rate limits
       await sleep(3000)
     }
 
-    // Upsert CDRs into monthly table
     console.log(`[pull] Upserting ${allCdrs.length} CDRs…`)
+    await updateProgress(month, 30, `Upserting ${allCdrs.length} CDRs…`)
     await upsertCDRBatch(allCdrs, month)
 
-    // === FETCH QUEUE STATS ===
+    // === FETCH QUEUE STATS (30-40%) ===
     const queueIds = [ENGLISH_QUEUE_ID, FRENCH_QUEUE_ID, ...AI_OVERFLOW_QUEUE_IDS]
     let queueStatsCount = 0
 
-    for (const qid of queueIds) {
+    for (let i = 0; i < queueIds.length; i++) {
+      const qid = queueIds[i]
+      const pct = 30 + Math.round(((i + 1) / queueIds.length) * 10)
+      await updateProgress(month, pct, `Fetching queue stats for ${qid}…`)
+
       console.log(`[pull] Fetching queue stats for ${qid}…`)
       try {
         const stats = await getQueueStats(qid, startDate, endDate) as unknown as QueueStatsRow
@@ -140,15 +147,36 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
       await sleep(500)
     }
 
-    // === SYNC INTO PART 1 TABLES (for KPI computation) ===
-    // Sync each day into cdr_segments, queue_stats_daily, logical_calls, queue_splits
-    // so that getDashboardData can query them
+    // === FETCH CONNECTWISE TICKETS (40-55%) ===
+    let tickets: Awaited<ReturnType<typeof fetchTickets>> = []
+    await updateProgress(month, 42, 'Fetching ConnectWise tickets…')
+    console.log(`[pull] Fetching ConnectWise tickets…`)
+
+    try {
+      tickets = await fetchTickets(startDate, endDate)
+      console.log(`[pull]   → ${tickets.length} tickets`)
+
+      if (tickets.length > 0) {
+        await updateProgress(month, 50, `Upserting ${tickets.length} tickets…`)
+        await upsertTicketBatch(tickets, month)
+      }
+    } catch (err) {
+      // ConnectWise failure is non-fatal — log and continue
+      console.warn('[pull] ConnectWise ticket fetch failed (non-fatal):', err)
+    }
+
+    await updateProgress(month, 55, 'Syncing into Part 1 tables…')
+
+    // === SYNC INTO PART 1 TABLES (55-80%) ===
     console.log(`[pull] Syncing into Part 1 tables for KPI computation…`)
     const failedDays: string[] = []
-    for (const day of days) {
-      const dayStr = format(day, 'yyyy-MM-dd')
+    for (let i = 0; i < days.length; i++) {
+      const dayStr = format(days[i], 'yyyy-MM-dd')
+      const pct = 55 + Math.round(((i + 1) / totalDays) * 25)
+      await updateProgress(month, pct, `Syncing ${dayStr}…`)
+
       try {
-        await syncDay(day)
+        await syncDay(days[i])
       } catch (err) {
         failedDays.push(dayStr)
         console.warn(`[pull] syncDay failed for ${dayStr}:`, err)
@@ -160,24 +188,38 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
       throw new Error(`syncDay failed for ${failedDays.length} day(s): ${failedDays.join(', ')}`)
     }
 
-    // === COMPUTE KPI SNAPSHOT ===
-    console.log(`[pull] Computing KPI snapshot…`)
+    // === COMPUTE KPI SNAPSHOTS (80-95%) ===
+    await updateProgress(month, 82, 'Computing KPI snapshots…')
+    console.log(`[pull] Computing KPI snapshots…`)
     const period = {
       start: new Date(`${startDate}T00:00:00`),
       end: new Date(`${endDate}T23:59:59`),
     }
-    const kpiData = await getDashboardData(period, { includeWeekends: false })
 
+    // Full KPIs
+    const kpiData = await getDashboardData(period, { includeWeekends: false })
     await upsertKPISnapshot(month, {
       ...kpiData,
       dataSource: 'historical',
       lastUpdated: new Date().toISOString(),
     })
 
+    // Business-hours KPIs (weekdays only)
+    await updateProgress(month, 90, 'Computing business-hours KPI snapshot…')
+    const bhKpiData = await getDashboardData(period, { includeWeekends: false })
+    await upsertBhKpiSnapshot(month, {
+      ...bhKpiData,
+      dataSource: 'historical',
+      lastUpdated: new Date().toISOString(),
+    })
+
+    // === FINALIZE (95-100%) ===
+    await updateProgress(month, 95, 'Finalizing…')
+
     const recordCounts = {
       cdrs: allCdrs.length,
       queueStats: queueStatsCount,
-      tickets: 0, // ConnectWise not yet integrated
+      tickets: tickets.length,
     }
 
     const durationMs = Date.now() - jobStart
@@ -185,7 +227,7 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
 
     await pool.query(
       `UPDATE monthly_pull_log
-       SET status = 'completed', completed_at = NOW(), record_counts = $2
+       SET status = 'completed', completed_at = NOW(), record_counts = $2, progress_pct = 100, progress_message = 'Complete'
        WHERE month = $1`,
       [month, JSON.stringify(recordCounts)],
     )
