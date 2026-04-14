@@ -1,7 +1,6 @@
 import { formatInTimeZone } from 'date-fns-tz'
 import { startOfMonth, endOfMonth, subMonths, format, eachDayOfInterval } from 'date-fns'
-import { getDomainCdrs, getQueueStats, getQueueSplits } from '@/lib/versature/endpoints'
-import { buildLogicalCalls } from '@/lib/versature/logical-calls'
+import { getDomainCdrs, getQueueStats } from '@/lib/versature/endpoints'
 import { ENGLISH_QUEUE_ID, FRENCH_QUEUE_ID, AI_OVERFLOW_QUEUE_IDS } from '@/lib/versature/queues'
 import { getDashboardData } from '@/lib/kpis/get-dashboard-data'
 import { syncDay } from '@/lib/versature/sync'
@@ -12,6 +11,21 @@ const TZ = 'America/Toronto'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
+}
+
+export async function updateProgress(
+  month: string,
+  pct: number,
+  message: string,
+  totalPages?: number,
+): Promise<void> {
+  const pool = getPool()
+  await pool.query(
+    `UPDATE monthly_pull_log
+     SET progress_pct = $2, progress_message = $3, total_pages = $4
+     WHERE month = $1`,
+    [month, pct, message, totalPages ?? null],
+  )
 }
 
 function parseMonth(month: string): { startDate: string; endDate: string } {
@@ -65,14 +79,21 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
     // 'failed' → fall through and retry
   }
 
-  // Mark in_progress
-  await pool.query(
+  // Atomic CAS: only transition to in_progress if not already in_progress.
+  // Prevents two concurrent requests from both running the full pull.
+  const cas = await pool.query(
     `INSERT INTO monthly_pull_log (month, status, started_at)
      VALUES ($1, 'in_progress', NOW())
      ON CONFLICT (month) DO UPDATE
-     SET status = 'in_progress', started_at = NOW(), error = NULL, completed_at = NULL`,
+     SET status = 'in_progress', started_at = NOW(), error = NULL, completed_at = NULL
+     WHERE monthly_pull_log.status != 'in_progress'
+     RETURNING id`,
     [month],
   )
+
+  if (cas.rows.length === 0) {
+    return { status: 'in_progress' }
+  }
 
   const jobStart = Date.now()
 
@@ -123,20 +144,27 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
     // Sync each day into cdr_segments, queue_stats_daily, logical_calls, queue_splits
     // so that getDashboardData can query them
     console.log(`[pull] Syncing into Part 1 tables for KPI computation…`)
+    const failedDays: string[] = []
     for (const day of days) {
+      const dayStr = format(day, 'yyyy-MM-dd')
       try {
         await syncDay(day)
       } catch (err) {
-        console.warn(`[pull] syncDay failed for ${format(day, 'yyyy-MM-dd')}:`, err)
+        failedDays.push(dayStr)
+        console.warn(`[pull] syncDay failed for ${dayStr}:`, err)
       }
       await sleep(3000)
+    }
+
+    if (failedDays.length > 0) {
+      throw new Error(`syncDay failed for ${failedDays.length} day(s): ${failedDays.join(', ')}`)
     }
 
     // === COMPUTE KPI SNAPSHOT ===
     console.log(`[pull] Computing KPI snapshot…`)
     const period = {
-      start: new Date(`${startDate}T00:00:00-04:00`),
-      end: new Date(`${endDate}T23:59:59-04:00`),
+      start: new Date(`${startDate}T00:00:00`),
+      end: new Date(`${endDate}T23:59:59`),
     }
     const kpiData = await getDashboardData(period, { includeWeekends: false })
 
