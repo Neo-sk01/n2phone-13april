@@ -16,7 +16,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   try {
     const result = await getPool().query(
-      'SELECT status, started_at, completed_at, record_counts, error FROM monthly_pull_log WHERE month = $1',
+      'SELECT status, started_at, completed_at, record_counts, error, progress_pct, progress_message, total_pages FROM monthly_pull_log WHERE month = $1',
       [month],
     )
 
@@ -27,6 +27,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const row = result.rows[0]
     const rc = row.record_counts as { cdrs: number; queueStats: number; tickets: number } | null
 
+    // Mark stale jobs: if in_progress for > 30 minutes, flag as potentially stale
+    let stale = false
+    if (row.status === 'in_progress' && row.started_at) {
+      const elapsed = Date.now() - new Date(row.started_at).getTime()
+      stale = elapsed > 30 * 60 * 1000
+    }
+
     return NextResponse.json({
       status: row.status as string,
       month,
@@ -34,6 +41,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       pulledAt: row.completed_at ? new Date(row.completed_at).toISOString() : undefined,
       recordCounts: rc ?? undefined,
       error: row.error ?? undefined,
+      progressPct: row.progress_pct ?? 0,
+      progressMessage: row.progress_message ?? undefined,
+      totalPages: row.total_pages ?? undefined,
+      stale,
     })
   } catch {
     return NextResponse.json({ status: 'not_pulled', month })
