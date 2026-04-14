@@ -146,3 +146,15 @@ export async function upsertKPISnapshot(month: string, kpis: Record<string, unkn
     [month, JSON.stringify(kpis)],
   )
 }
+
+export async function upsertBhKpiSnapshot(month: string, bhKpis: Record<string, unknown>): Promise<void> {
+  const { getPool } = await import('./db')
+  const pool = getPool()
+  await pool.query(
+    `INSERT INTO monthly_kpi_snapshots (month, computed_at, kpis, bh_kpis)
+    VALUES ($1, NOW(), '{}'::jsonb, $2)
+    ON CONFLICT (month) DO UPDATE SET
+      bh_kpis = EXCLUDED.bh_kpis`,
+    [month, JSON.stringify(bhKpis)],
+  )
+}
