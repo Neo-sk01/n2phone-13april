@@ -6,7 +6,16 @@ import { getDashboardData } from '@/lib/kpis/get-dashboard-data'
 import { syncMonthQueueData } from '@/lib/versature/sync'
 import { getPool } from './db'
 import { fetchTickets } from '@/lib/connectwise/client'
-import { upsertQueueStats, upsertTicketBatch, upsertKPISnapshot, upsertBhKpiSnapshot, type QueueStatsRow } from './upsert'
+import { getCdrsForUsers } from '@/lib/versature/cdrs-users'
+import { runMonthlyCorrelation } from '@/lib/connectwise/runner'
+import {
+  upsertQueueStats,
+  upsertTicketBatch,
+  upsertAiCandidateCalls,
+  upsertKPISnapshot,
+  upsertBhKpiSnapshot,
+  type QueueStatsRow,
+} from './upsert'
 
 const TZ = 'America/Toronto'
 
@@ -50,7 +59,7 @@ export interface PullResult {
   pulledAt?: string
   startedAt?: string
   duration?: string
-  recordCounts?: { cdrs: number; queueStats: number; tickets: number }
+  recordCounts?: { cdrs: number; queueStats: number; tickets: number; correlations?: number }
   error?: string
 }
 
@@ -130,9 +139,24 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
       await sleep(500)
     }
 
-    // === FETCH CONNECTWISE TICKETS (10-25%) ===
+    // === FETCH AI-QUEUE CDRS (10-22%) ===
+    await updateProgress(month, 12, 'Fetching AI-queue CDRs…')
+    console.log(`[pull] Fetching AI-queue CDRs (${AI_OVERFLOW_QUEUE_IDS.join(', ')})…`)
+    let aiCalls: Awaited<ReturnType<typeof getCdrsForUsers>> = []
+    try {
+      aiCalls = await getCdrsForUsers([...AI_OVERFLOW_QUEUE_IDS], startDate, endDate)
+      console.log(`[pull]   → ${aiCalls.length} AI-queue calls`)
+      if (aiCalls.length > 0) {
+        await updateProgress(month, 20, `Upserting ${aiCalls.length} AI candidate calls…`)
+        await upsertAiCandidateCalls(aiCalls, month)
+      }
+    } catch (err) {
+      console.warn('[pull] AI CDR fetch failed (non-fatal):', err)
+    }
+
+    // === FETCH CONNECTWISE TICKETS (22-33%) ===
     let tickets: Awaited<ReturnType<typeof fetchTickets>> = []
-    await updateProgress(month, 12, 'Fetching ConnectWise tickets…')
+    await updateProgress(month, 24, 'Fetching ConnectWise tickets…')
     console.log(`[pull] Fetching ConnectWise tickets…`)
 
     try {
@@ -140,12 +164,25 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
       console.log(`[pull]   → ${tickets.length} tickets`)
 
       if (tickets.length > 0) {
-        await updateProgress(month, 20, `Upserting ${tickets.length} tickets…`)
+        await updateProgress(month, 30, `Upserting ${tickets.length} tickets…`)
         await upsertTicketBatch(tickets, month)
       }
     } catch (err) {
       // ConnectWise failure is non-fatal — log and continue
       console.warn('[pull] ConnectWise ticket fetch failed (non-fatal):', err)
+    }
+
+    // === RUN CORRELATION (33-40%) ===
+    await updateProgress(month, 34, 'Correlating AI calls to tickets…')
+    let correlationResult = { candidates: 0, matched: 0, exact: 0, fuzzy: 0 }
+    try {
+      correlationResult = await runMonthlyCorrelation(month)
+      console.log(
+        `[pull]   → correlated ${correlationResult.matched}/${correlationResult.candidates}` +
+          ` (exact ${correlationResult.exact}, fuzzy ${correlationResult.fuzzy})`,
+      )
+    } catch (err) {
+      console.warn('[pull] Correlation failed (non-fatal):', err)
     }
 
     // === SYNC INTO PART 1 TABLES (25-80%) ===
@@ -187,9 +224,10 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
     await updateProgress(month, 95, 'Finalizing…')
 
     const recordCounts = {
-      cdrs: 0,
+      cdrs: aiCalls.length,
       queueStats: queueStatsCount,
       tickets: tickets.length,
+      correlations: correlationResult.matched,
     }
 
     const durationMs = Date.now() - jobStart
