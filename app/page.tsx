@@ -3,7 +3,18 @@ import { PeriodToggle } from './components/PeriodToggle'
 import { PullDataButton } from './components/PullDataButton'
 import { getDashboardData } from '@/lib/kpis/get-dashboard-data'
 import { getLastSuccessfulIngestAt } from '@/lib/db/queries'
-import { detectHistoricalMonth, readKPISnapshot } from '@/lib/db/historical'
+import {
+  detectHistoricalMonth,
+  readKPISnapshotWithHealth,
+  resolveHistoricalMonth,
+  type AiHealthStatus,
+} from '@/lib/db/historical'
+import { fromZonedTime } from 'date-fns-tz'
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
 import { getPeriodRange } from '@/lib/utils/dates'
 import { formatDuration } from '@/lib/utils/format'
 import { toTorontoDateString } from '@/lib/utils/dates'
@@ -18,20 +29,54 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
   const params = await searchParams
   const period = params.period === 'this-week' || params.period === 'this-month' ? params.period : 'today'
   const includeWeekends = params.includeWeekends === 'true'
-  const range = getPeriodRange(period)
+
+  // Explicit past-month selection via ?month=YYYY-MM. Validated against the
+  // current Toronto month so users can't request the current or future months.
+  const monthParam = typeof params.month === 'string' ? params.month : undefined
+  const selectedMonth = monthParam ? resolveHistoricalMonth(monthParam) : null
+
+  // When a past month is selected, the "range" shown in the header reflects
+  // that month instead of the period toggle. Otherwise fall back to the
+  // period-based range (today / this-week / this-month).
+  let range = getPeriodRange(period)
+  if (selectedMonth) {
+    const [y, mo] = selectedMonth.split('-').map(Number)
+    // Last calendar day of the month (UTC arithmetic just to get the number).
+    const lastDay = new Date(Date.UTC(y, mo, 0)).getUTCDate()
+    const mm = String(mo).padStart(2, '0')
+    const dd = String(lastDay).padStart(2, '0')
+    // Parse as Toronto wall-clock time so we don't drift with machine TZ.
+    const start = fromZonedTime(`${y}-${mm}-01T00:00:00.000`, 'America/Toronto')
+    const end = fromZonedTime(`${y}-${mm}-${dd}T23:59:59.999`, 'America/Toronto')
+    range = {
+      key: period,
+      label: `${MONTH_NAMES[mo - 1]} ${y}`,
+      start,
+      end,
+    } as typeof range
+  }
 
   // Check for historical snapshot first
-  let data: Awaited<ReturnType<typeof getDashboardData>> & { dataSource?: string }
+  let data: Awaited<ReturnType<typeof getDashboardData>> & {
+    dataSource?: string
+    aiHealthStatus?: AiHealthStatus
+  }
   let isHistorical = false
+  let historicalAiHealth: AiHealthStatus | undefined
   try {
-    const historicalMonth = await detectHistoricalMonth(
-      formatInTimeZone(range.start, 'America/Toronto', 'yyyy-MM-dd'),
-      formatInTimeZone(range.end, 'America/Toronto', 'yyyy-MM-dd'),
-    )
+    const historicalMonth =
+      selectedMonth ??
+      (await detectHistoricalMonth(
+        formatInTimeZone(range.start, 'America/Toronto', 'yyyy-MM-dd'),
+        formatInTimeZone(range.end, 'America/Toronto', 'yyyy-MM-dd'),
+      ))
     if (historicalMonth) {
-      const snapshot = await readKPISnapshot(historicalMonth)
+      const snapshot = await readKPISnapshotWithHealth(historicalMonth)
       if (snapshot) {
-        data = snapshot as typeof data
+        data = snapshot.kpis as typeof data
+        // pull_log.ai_health_status is authoritative. Snapshot JSON may carry
+        // a stale or absent value for legacy rows; prefer the DB column.
+        historicalAiHealth = snapshot.aiHealthStatus
         isHistorical = true
       } else {
         data = await getDashboardData(range, { includeWeekends })
@@ -139,17 +184,21 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
       {/*
         Degraded historical snapshots have kpi11..14 stripped by the pull, so
         we pass them through as-possibly-undefined. VoiceAssistHealth renders
-        an explicit unavailable state instead of fabricated zeros. The
-        aiHealthStatus field comes from the snapshot payload (see pull.ts).
+        an explicit unavailable state instead of fabricated zeros.
+
+        aiHealthStatus precedence for historical views:
+        1. pull_log.ai_health_status (authoritative — handles legacy snapshots
+           that pre-date the field and would otherwise look healthy).
+        2. Embedded snapshot value (only as a last-resort fallback; shouldn't
+           happen in practice since readKPISnapshotWithHealth always returns
+           a status).
       */}
       <VoiceAssistHealth
         kpi11={data.kpi11}
         kpi12={data.kpi12}
         kpi13={data.kpi13}
         kpi14={data.kpi14}
-        aiHealthStatus={
-          (data as { aiHealthStatus?: 'complete' | 'degraded' | 'unknown' }).aiHealthStatus
-        }
+        aiHealthStatus={historicalAiHealth ?? data.aiHealthStatus}
       />
     </main>
   )
