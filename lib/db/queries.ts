@@ -162,15 +162,18 @@ export async function getShortAnsweredCallCount(
   thresholdSeconds: number,
   options: { includeWeekends?: boolean } = {},
 ) {
+  // Counts de-duplicated logical calls, not raw segments. A transferred call
+  // produces multiple cdr_segments rows but a single logical_call, so counting
+  // segments would inflate the short-call count disproportionately.
   const result = await getPool().query(
     `
       select count(*)::int as count
-      from cdr_segments
+      from logical_calls
       where start_time >= $1
         and start_time <= $2
-        and answer_time is not null
+        and answered = true
         and duration_seconds < $3
-        and to_id = any($4::text[])
+        and dnis = any($4::text[])
         and ($5::boolean or extract(isodow from start_time at time zone 'America/Toronto') between 1 and 5)
     `,
     [
@@ -257,15 +260,18 @@ export async function getAverageAnsweredDurationByHour(
   period: { start: Date; end: Date },
   options: { includeWeekends?: boolean } = {},
 ) {
+  // Averages de-duplicated logical calls, not raw segments. Segment-level
+  // averaging biased the result toward transferred/complex calls that
+  // generated multiple rows for a single real conversation.
   const result = await getPool().query(
     `
       select extract(hour from start_time at time zone 'America/Toronto')::int as hour,
              round(avg(duration_seconds))::int as average_seconds
-      from cdr_segments
+      from logical_calls
       where start_time >= $1
         and start_time <= $2
-        and answer_time is not null
-        and to_id = any($3::text[])
+        and answered = true
+        and dnis = any($3::text[])
         and ($4::boolean or extract(isodow from start_time at time zone 'America/Toronto') between 1 and 5)
         and extract(hour from start_time at time zone 'America/Toronto') between 8 and 18
       group by hour
