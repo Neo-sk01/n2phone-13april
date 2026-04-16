@@ -14,7 +14,15 @@ export async function computeKpi7(
     computeKpi5(period, options),
   ])
 
-  const total = incoming.primaryCount || 1
+  // Every numerator here is from queue_stats (calls_offered per queue), so the
+  // denominator must also be queue-based. Mixing in logical_calls (primaryCount)
+  // made the percentages drift whenever the two methods disagreed. When the
+  // queue count is zero we return zeros rather than faking a divisor.
+  const total = incoming.queueCount
+  if (total === 0) {
+    return { englishPct: 0, frenchPct: 0, aiPct: 0, unroutedPct: 0 }
+  }
+
   const englishPct = english.totalEnglish / total
   const frenchPct = french.totalFrench / total
   const aiPct = ai.totalAi / total
