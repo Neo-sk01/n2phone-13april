@@ -13,6 +13,13 @@ vi.mock('@/lib/kpis/get-dashboard-data', () => ({
     kpi8: { rows: [] },
     kpi9: { series: [] },
     kpi10: { series: [] },
+    kpi11: { candidates: 20, matched: 15, exact: 12, fuzzy: 3, rate: 0.75 },
+    kpi12: { totalUnmatched: 5, byQueue: [{ queue: '8030', count: 5 }], sample: [] },
+    kpi13: {
+      overall: { resolved: 10, met: 8, open: 2, rate: 0.8 },
+      daily: [],
+    },
+    kpi14: { count: 10, meanMinutes: 45, medianMinutes: 30, p90Minutes: 120 },
     shortCalls: { totalShortCalls: 1, thresholdSeconds: 10 },
   }),
 }))
@@ -29,5 +36,8 @@ describe('dashboard page', () => {
     expect(html).toContain('CSH Dashboard')
     expect(html).toContain('Total Incoming Calls')
     expect(html).toContain('AI Voice Assist Health')
+    expect(html).toContain('Correlation Rate')
+    expect(html).toContain('75.0%')
+    expect(html).toContain('Median Resolution Time')
   })
 })

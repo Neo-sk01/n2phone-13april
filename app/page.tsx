@@ -9,6 +9,7 @@ import { formatDuration } from '@/lib/utils/format'
 import { formatInTimeZone } from 'date-fns-tz'
 import Link from 'next/link'
 import { LanguageSplitChart, HourlyDurationChart, DayOfWeekChart } from './components/Charts'
+import { VoiceAssistHealth } from './components/VoiceAssistHealth'
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>
 
@@ -134,10 +135,19 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
         ) : null}
       </section>
 
-      <section className="rounded-2xl border border-dashed border-lime-800/40 bg-[#111411] p-5">
-        <h2 className="text-lg font-semibold text-lime-300">AI Voice Assist Health</h2>
-        <p className="mt-2 text-sm text-lime-300/60">Reserved for Part 2 after Part 1 manual validation.</p>
-      </section>
+      <VoiceAssistHealth
+        kpi11={data.kpi11 ?? { candidates: 0, matched: 0, exact: 0, fuzzy: 0, rate: 0 }}
+        kpi12={data.kpi12 ?? { totalUnmatched: 0, byQueue: [], sample: [] }}
+        kpi13={
+          data.kpi13 ?? {
+            overall: { resolved: 0, met: 0, open: 0, rate: 0 },
+            daily: [],
+          }
+        }
+        kpi14={
+          data.kpi14 ?? { count: 0, meanMinutes: 0, medianMinutes: 0, p90Minutes: 0 }
+        }
+      />
     </main>
   )
 }
