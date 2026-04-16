@@ -7,9 +7,20 @@ import {
   startOfMonth,
   startOfWeek,
 } from 'date-fns'
-import { toZonedTime, fromZonedTime } from 'date-fns-tz'
+import { toZonedTime, fromZonedTime, formatInTimeZone } from 'date-fns-tz'
 
 const TIMEZONE = 'America/Toronto'
+
+/**
+ * Returns the Toronto calendar date (YYYY-MM-DD) for a UTC timestamp.
+ *
+ * Use this instead of `date.toISOString().slice(0, 10)` when querying tables
+ * that store Toronto-local business dates. The slice trick returns the UTC
+ * date, which is off by one for timestamps that fall after 19:00–20:00 EST/EDT.
+ */
+export function toTorontoDateString(date: Date): string {
+  return formatInTimeZone(date, TIMEZONE, 'yyyy-MM-dd')
+}
 
 export type PeriodKey = 'today' | 'this-week' | 'this-month'
 

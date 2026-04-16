@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg'
 import { getPool } from './client'
 import type { LogicalCallRow } from './schema'
+import { toTorontoDateString } from '@/lib/utils/dates'
 
 export function buildUpsertQueueStatsStatement() {
   return `
@@ -117,8 +118,8 @@ export async function getCallsOfferedForQueues(
         and ($4::boolean or extract(isodow from stats_date) between 1 and 5)
     `,
     [
-      period.start.toISOString().slice(0, 10),
-      period.end.toISOString().slice(0, 10),
+      toTorontoDateString(period.start),
+      toTorontoDateString(period.end),
       queueIds,
       options.includeWeekends ?? false,
     ],
@@ -144,8 +145,8 @@ export async function getAbandonedCallsForQueues(
         and ($4::boolean or extract(isodow from stats_date) between 1 and 5)
     `,
     [
-      period.start.toISOString().slice(0, 10),
-      period.end.toISOString().slice(0, 10),
+      toTorontoDateString(period.start),
+      toTorontoDateString(period.end),
       queueIds,
       options.includeWeekends ?? false,
     ],
@@ -201,8 +202,8 @@ export async function getAverageTalkTimes(
       order by queue_id
     `,
     [
-      period.start.toISOString().slice(0, 10),
-      period.end.toISOString().slice(0, 10),
+      toTorontoDateString(period.start),
+      toTorontoDateString(period.end),
       options.includeWeekends ?? false,
     ],
   )
