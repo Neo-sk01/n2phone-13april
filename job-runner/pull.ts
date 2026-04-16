@@ -72,7 +72,9 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
 
   // Check existing pull_log
   const existing = await pool.query(
-    'SELECT status, started_at, completed_at, record_counts FROM monthly_pull_log WHERE month = $1',
+    `SELECT status, started_at, completed_at, record_counts, ai_health_status
+       FROM monthly_pull_log
+      WHERE month = $1`,
     [month],
   )
 
@@ -81,14 +83,20 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
     if (row.status === 'in_progress') {
       return { status: 'in_progress', startedAt: new Date(row.started_at).toISOString() }
     }
-    if (row.status === 'completed') {
+    // Only short-circuit when the previous pull was FULLY successful. A month
+    // marked `completed` but with ai_health_status != 'complete' is a partial
+    // success — Part 1 KPIs are valid but AI-health stages failed and their
+    // KPIs were stripped from the snapshot. Allow rerun so operators can
+    // recover from transient ConnectWise / CDR / correlation failures.
+    if (row.status === 'completed' && row.ai_health_status === 'complete') {
       return {
         status: 'already_pulled',
         pulledAt: new Date(row.completed_at).toISOString(),
         recordCounts: row.record_counts,
+        aiHealthStatus: row.ai_health_status,
       }
     }
-    // 'failed' → fall through and retry
+    // 'failed' OR ('completed' && degraded/unknown) → fall through and retry
   }
 
   // Atomic CAS: only transition to in_progress if not already in_progress.
