@@ -8,6 +8,7 @@ import { getPool } from './db'
 import { fetchTickets } from '@/lib/connectwise/client'
 import { getCdrsForUsers } from '@/lib/versature/cdrs-users'
 import { runMonthlyCorrelation } from '@/lib/connectwise/runner'
+import { computeAiHealthStatus, stripAiHealthKpis } from './ai-health-status'
 import {
   upsertQueueStats,
   upsertTicketBatch,
@@ -60,6 +61,7 @@ export interface PullResult {
   startedAt?: string
   duration?: string
   recordCounts?: { cdrs: number; queueStats: number; tickets: number; correlations?: number }
+  aiHealthStatus?: 'complete' | 'degraded' | 'unknown'
   error?: string
 }
 
@@ -140,6 +142,11 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
     }
 
     // === FETCH AI-QUEUE CDRS (10-22%) ===
+    // Track each AI-health stage so we can mark the month `degraded` if any fails.
+    let aiCdrsOk = false
+    let ticketsOk = false
+    let correlationOk = false
+
     await updateProgress(month, 12, 'Fetching AI-queue CDRs…')
     console.log(`[pull] Fetching AI-queue CDRs (${AI_OVERFLOW_QUEUE_IDS.join(', ')})…`)
     let aiCalls: Awaited<ReturnType<typeof getCdrsForUsers>> = []
@@ -150,8 +157,9 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
         await updateProgress(month, 20, `Upserting ${aiCalls.length} AI candidate calls…`)
         await upsertAiCandidateCalls(aiCalls, month)
       }
+      aiCdrsOk = true
     } catch (err) {
-      console.warn('[pull] AI CDR fetch failed (non-fatal):', err)
+      console.warn('[pull] AI CDR fetch failed (degrades AI-health):', err)
     }
 
     // === FETCH CONNECTWISE TICKETS (22-33%) ===
@@ -167,23 +175,35 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
         await updateProgress(month, 30, `Upserting ${tickets.length} tickets…`)
         await upsertTicketBatch(tickets, month)
       }
+      ticketsOk = true
     } catch (err) {
-      // ConnectWise failure is non-fatal — log and continue
-      console.warn('[pull] ConnectWise ticket fetch failed (non-fatal):', err)
+      console.warn('[pull] ConnectWise ticket fetch failed (degrades AI-health):', err)
     }
 
     // === RUN CORRELATION (33-40%) ===
     await updateProgress(month, 34, 'Correlating AI calls to tickets…')
     let correlationResult = { candidates: 0, matched: 0, exact: 0, fuzzy: 0 }
-    try {
-      correlationResult = await runMonthlyCorrelation(month)
-      console.log(
-        `[pull]   → correlated ${correlationResult.matched}/${correlationResult.candidates}` +
-          ` (exact ${correlationResult.exact}, fuzzy ${correlationResult.fuzzy})`,
+    // Correlation is only meaningful if both upstream stages succeeded.
+    if (aiCdrsOk && ticketsOk) {
+      try {
+        correlationResult = await runMonthlyCorrelation(month)
+        console.log(
+          `[pull]   → correlated ${correlationResult.matched}/${correlationResult.candidates}` +
+            ` (exact ${correlationResult.exact}, fuzzy ${correlationResult.fuzzy})`,
+        )
+        correlationOk = true
+      } catch (err) {
+        console.warn('[pull] Correlation failed (degrades AI-health):', err)
+      }
+    } else {
+      console.warn(
+        '[pull] Skipping correlation — upstream AI-health stages did not complete' +
+          ` (aiCdrsOk=${aiCdrsOk}, ticketsOk=${ticketsOk})`,
       )
-    } catch (err) {
-      console.warn('[pull] Correlation failed (non-fatal):', err)
     }
+
+    const aiHealthStatus = computeAiHealthStatus({ aiCdrsOk, ticketsOk, correlationOk })
+    console.log(`[pull] AI-health status: ${aiHealthStatus}`)
 
     // === SYNC INTO PART 1 TABLES (25-80%) ===
     // Fetch month-wide daily splits per queue (one request each), then fan them
@@ -203,22 +223,33 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
       end: new Date(`${endDate}T23:59:59`),
     }
 
-    // Full KPIs
+    // Full KPIs. When AI-health is degraded, strip kpi11..kpi14 so historical
+    // readers see them as missing rather than frozen zeros.
     const kpiData = await getDashboardData(period, { includeWeekends: false })
-    await upsertKPISnapshot(month, {
+    const kpiPayload = {
       ...kpiData,
-      dataSource: 'historical',
+      dataSource: 'historical' as const,
+      aiHealthStatus,
       lastUpdated: new Date().toISOString(),
-    })
+    }
+    await upsertKPISnapshot(
+      month,
+      aiHealthStatus === 'complete' ? kpiPayload : stripAiHealthKpis(kpiPayload),
+    )
 
     // Business-hours KPIs (weekdays only)
     await updateProgress(month, 90, 'Computing business-hours KPI snapshot…')
     const bhKpiData = await getDashboardData(period, { includeWeekends: false })
-    await upsertBhKpiSnapshot(month, {
+    const bhKpiPayload = {
       ...bhKpiData,
-      dataSource: 'historical',
+      dataSource: 'historical' as const,
+      aiHealthStatus,
       lastUpdated: new Date().toISOString(),
-    })
+    }
+    await upsertBhKpiSnapshot(
+      month,
+      aiHealthStatus === 'complete' ? bhKpiPayload : stripAiHealthKpis(bhKpiPayload),
+    )
 
     // === FINALIZE (95-100%) ===
     await updateProgress(month, 95, 'Finalizing…')
@@ -235,13 +266,31 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
 
     await pool.query(
       `UPDATE monthly_pull_log
-       SET status = 'completed', completed_at = NOW(), record_counts = $2, progress_pct = 100, progress_message = 'Complete'
+       SET status = 'completed',
+           completed_at = NOW(),
+           record_counts = $2,
+           ai_health_status = $3,
+           progress_pct = 100,
+           progress_message = $4
        WHERE month = $1`,
-      [month, JSON.stringify(recordCounts)],
+      [
+        month,
+        JSON.stringify(recordCounts),
+        aiHealthStatus,
+        aiHealthStatus === 'complete' ? 'Complete' : 'Complete (AI-health degraded)',
+      ],
     )
 
-    console.log(`[pull] Completed in ${duration}: ${JSON.stringify(recordCounts)}`)
-    return { status: 'completed', pulledAt: new Date().toISOString(), duration, recordCounts }
+    console.log(
+      `[pull] Completed in ${duration} (aiHealth=${aiHealthStatus}): ${JSON.stringify(recordCounts)}`,
+    )
+    return {
+      status: 'completed',
+      pulledAt: new Date().toISOString(),
+      duration,
+      recordCounts,
+      aiHealthStatus,
+    }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     console.error(`[pull] Failed for ${month}:`, error)
