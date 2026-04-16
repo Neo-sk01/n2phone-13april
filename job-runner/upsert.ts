@@ -103,29 +103,47 @@ export type TicketRow = {
   dateEntered?: string
   contact?: { phoneNumber?: string }
   source?: { id?: number }
+  status?: { name?: string }
+  resolvedDateTime?: string
+  mergedIntoTicket?: { id?: number }
+  closedFlag?: boolean
   [key: string]: unknown
 }
 
 export async function upsertTicketBatch(tickets: TicketRow[], month: string): Promise<void> {
+  const { normalizePhone } = await import('@/lib/utils/phone')
   for (let i = 0; i < tickets.length; i += BATCH) {
     const chunk = tickets.slice(i, i + BATCH)
     await withTransaction(async (client: PoolClient) => {
       for (const t of chunk) {
+        const phone = t.contact?.phoneNumber ?? null
         await client.query(
           `INSERT INTO tickets
-            (id, month, summary, date_entered, phone_number, source_id, raw)
-          VALUES ($1,$2,$3,$4,$5,$6,$7)
+            (id, month, summary, date_entered, phone_number, source_id,
+             normalized_phone, status, resolved_date_time,
+             merged_into_ticket_id, closed_flag, raw)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
           ON CONFLICT (id, month) DO UPDATE SET
-            summary      = EXCLUDED.summary,
-            date_entered = EXCLUDED.date_entered,
-            raw          = EXCLUDED.raw`,
+            summary               = EXCLUDED.summary,
+            date_entered          = EXCLUDED.date_entered,
+            normalized_phone      = EXCLUDED.normalized_phone,
+            status                = EXCLUDED.status,
+            resolved_date_time    = EXCLUDED.resolved_date_time,
+            merged_into_ticket_id = EXCLUDED.merged_into_ticket_id,
+            closed_flag           = EXCLUDED.closed_flag,
+            raw                   = EXCLUDED.raw`,
           [
             t.id,
             month,
             t.summary ?? null,
             t.dateEntered ? new Date(t.dateEntered) : null,
-            t.contact?.phoneNumber ?? null,
+            phone,
             t.source?.id ?? null,
+            normalizePhone(phone),
+            t.status?.name ?? null,
+            t.resolvedDateTime ? new Date(t.resolvedDateTime) : null,
+            t.mergedIntoTicket?.id ?? null,
+            t.closedFlag ?? null,
             JSON.stringify(t),
           ],
         )

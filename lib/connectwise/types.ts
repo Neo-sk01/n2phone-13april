@@ -4,5 +4,9 @@ export type ConnectWiseTicket = {
   dateEntered?: string
   contact?: { phoneNumber?: string }
   source?: { id?: number }
+  status?: { name?: string }
+  resolvedDateTime?: string
+  mergedIntoTicket?: { id?: number }
+  closedFlag?: boolean
   [key: string]: unknown
 }

@@ -45,6 +45,22 @@ describe('fetchTickets', () => {
     expect(tickets).toHaveLength(0)
   })
 
+  test('requests the enriched fields list', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => [] })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { fetchTickets } = await import('@/lib/connectwise/client')
+    await fetchTickets('2026-03-01', '2026-03-31')
+
+    const url = new URL(fetchMock.mock.calls[0][0])
+    const fields = url.searchParams.get('fields') ?? ''
+    expect(fields).toContain('id')
+    expect(fields).toContain('status/name')
+    expect(fields).toContain('resolvedDateTime')
+    expect(fields).toContain('mergedIntoTicket/id')
+    expect(fields).toContain('contact/phoneNumber')
+  })
+
   test('logs and stops pagination on non-OK response', async () => {
     const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 

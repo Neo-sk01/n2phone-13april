@@ -2,6 +2,17 @@ import { buildConnectWiseHeaders } from './auth'
 import type { ConnectWiseTicket } from './types'
 
 const PAGE_SIZE = 100
+const FIELDS = [
+  'id',
+  'summary',
+  'dateEntered',
+  'contact/phoneNumber',
+  'source/id',
+  'status/name',
+  'resolvedDateTime',
+  'mergedIntoTicket/id',
+  'closedFlag',
+].join(',')
 
 export async function fetchTickets(
   startDate: string,
@@ -16,7 +27,11 @@ export async function fetchTickets(
   let page = 1
 
   while (true) {
-    const url = `${baseUrl}/service/tickets?conditions=${encodeURIComponent(conditions)}&pageSize=${PAGE_SIZE}&page=${page}`
+    const url =
+      `${baseUrl}/service/tickets` +
+      `?conditions=${encodeURIComponent(conditions)}` +
+      `&fields=${encodeURIComponent(FIELDS)}` +
+      `&pageSize=${PAGE_SIZE}&page=${page}`
 
     const response = await fetch(url, { headers })
 
