@@ -35,9 +35,15 @@ export async function computeKpi13(period: { start: Date; end: Date }) {
     [period.start, period.end],
   )
 
+  // Group by Toronto calendar day so the daily series matches every other
+  // date-based display on the dashboard. A raw date_trunc('day', …) would
+  // bucket by UTC day and misattribute evening-Toronto tickets.
   const daily = await pool.query(
     `${METRICS_CTE}
-     SELECT to_char(date_trunc('day', date_entered), 'YYYY-MM-DD') AS day,
+     SELECT to_char(
+              date_trunc('day', date_entered AT TIME ZONE 'America/Toronto'),
+              'YYYY-MM-DD'
+            ) AS day,
             COUNT(*) FILTER (WHERE resolved_date_time IS NOT NULL)::int AS resolved,
             COUNT(*) FILTER (
               WHERE resolved_date_time IS NOT NULL

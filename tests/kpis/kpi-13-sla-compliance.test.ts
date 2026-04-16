@@ -42,4 +42,16 @@ describe('computeKpi13', () => {
     expect(r.overall.rate).toBe(0)
     expect(r.daily).toEqual([])
   })
+
+  test('daily series groups by Toronto calendar day, not UTC day', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ resolved: '0', met: '0', open: '0' }] })
+      .mockResolvedValueOnce({ rows: [] })
+
+    const { computeKpi13 } = await import('@/lib/kpis/kpi-13-sla-compliance')
+    await computeKpi13({ start: new Date(), end: new Date() })
+
+    const dailySql: string = queryMock.mock.calls[1][0]
+    expect(dailySql).toMatch(/AT TIME ZONE 'America\/Toronto'/)
+  })
 })
