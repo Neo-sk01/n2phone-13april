@@ -44,6 +44,46 @@ export async function upsertCDRBatch(cdrs: VersatureCdr[], month: string): Promi
   }
 }
 
+export async function upsertAiCandidateCalls(
+  cdrs: VersatureCdr[],
+  month: string,
+): Promise<void> {
+  const { normalizePhone } = await import('@/lib/utils/phone')
+  for (let i = 0; i < cdrs.length; i += BATCH) {
+    const chunk = cdrs.slice(i, i + BATCH)
+    await withTransaction(async (client: PoolClient) => {
+      for (const c of chunk) {
+        const id = c.id ?? c.from?.call_id ?? `${c.start_time}-${c.from?.id ?? 'unknown'}`
+        const fromNumber = c.from?.number ?? c.from?.id ?? null
+        await client.query(
+          `INSERT INTO ai_candidate_calls
+            (cdr_id, month, to_user, from_number, normalized_phone,
+             start_time, answer_time, end_time, duration, raw)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          ON CONFLICT (cdr_id, month) DO UPDATE SET
+            normalized_phone = EXCLUDED.normalized_phone,
+            answer_time      = EXCLUDED.answer_time,
+            end_time         = EXCLUDED.end_time,
+            duration         = EXCLUDED.duration,
+            raw              = EXCLUDED.raw`,
+          [
+            id,
+            month,
+            c.to?.user ?? '',
+            fromNumber,
+            normalizePhone(fromNumber),
+            c.start_time ? new Date(c.start_time) : null,
+            c.answer_time ? new Date(c.answer_time) : null,
+            c.end_time ? new Date(c.end_time) : null,
+            c.duration ?? null,
+            JSON.stringify(c),
+          ],
+        )
+      }
+    })
+  }
+}
+
 export type QueueStatsRow = {
   queue?: string
   description?: string
