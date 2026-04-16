@@ -14,13 +14,13 @@ export function PeriodToggle({
   ] as const
 
   return (
-    <div className="inline-flex rounded-full border border-slate-200 p-1">
+    <div className="inline-flex rounded-full border border-lime-800 p-1">
       {items.map((item) => (
         <Link
           key={item.key}
           href={`/?period=${item.key}${includeWeekends ? '&includeWeekends=true' : ''}`}
           className={`rounded-full px-4 py-2 text-sm ${
-            item.key === current ? 'bg-slate-900 text-white' : 'text-slate-600'
+            item.key === current ? 'bg-lime-500 font-medium text-black' : 'text-lime-300/70 hover:text-lime-200'
           }`}
         >
           {item.label}

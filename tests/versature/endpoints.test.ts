@@ -1,11 +1,15 @@
 import { describe, expect, test, vi } from 'vitest'
 
 vi.mock('@/lib/versature/client', () => ({
-  fetchAllPages: vi.fn().mockResolvedValue([{ id: 'cdr-1' }]),
   versatureFetch: vi
     .fn()
+    // getDomainCdrs: first page returns data, second page returns empty (stops pagination)
+    .mockResolvedValueOnce([{ id: 'cdr-1' }])
+    // getQueueStats
     .mockResolvedValueOnce({ calls_offered: 10, abandoned_calls: 2 })
+    // getQueueSplits
     .mockResolvedValueOnce([{ interval: '2026-04-01T00:00:00Z', volume: 3 }])
+    // listQueues
     .mockResolvedValueOnce([{ id: '8020', description: 'English queue' }]),
 }))
 

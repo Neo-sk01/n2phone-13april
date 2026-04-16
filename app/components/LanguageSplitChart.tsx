@@ -3,7 +3,7 @@
 import { PieChart, Pie, Cell } from 'recharts'
 
 export function LanguageSplitChart({ data }: { data: Array<{ name: string; value: number }> }) {
-  const colors = ['#0f172a', '#475569', '#94a3b8', '#cbd5e1']
+  const colors = ['#84cc16', '#a3e635', '#3f6212', '#1a2e05']
 
   return (
     <PieChart width={320} height={240}>

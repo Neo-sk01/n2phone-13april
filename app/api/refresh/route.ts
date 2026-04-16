@@ -19,8 +19,8 @@ export async function POST(request: NextRequest) {
 
   try {
     for (const day of eachDayOfInterval({
-      start: new Date(`${startDate}T12:00:00-04:00`),
-      end: new Date(`${endDate}T12:00:00-04:00`),
+      start: new Date(`${startDate}T12:00:00`),
+      end: new Date(`${endDate}T12:00:00`),
     })) {
       await syncDay(day)
     }

@@ -22,8 +22,8 @@ export async function getDomainCdrs(startDate: string, endDate: string) {
       break
     }
 
-    // Pace requests to avoid 429s
-    await new Promise((r) => setTimeout(r, 2500))
+    // Pace between pages to avoid 429s — high-volume days can have 100+ pages
+    await new Promise((r) => setTimeout(r, 4000))
     page++
   }
 

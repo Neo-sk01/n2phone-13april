@@ -68,13 +68,13 @@ export async function versatureFetch(path: string) {
     throw new Error(`Versature request failed (${response.status}) for ${path}`)
   }
 
-  for (let tries = 0; tries < 5; tries++) {
+  for (let tries = 0; tries < 10; tries++) {
     try {
       return await attempt()
     } catch (error) {
       if (error instanceof RateLimitedError) {
-        const delay = Math.min(2000 * Math.pow(2, tries), 30000)
-        console.log(`Rate limited on ${path}, waiting ${delay / 1000}s (attempt ${tries + 1}/5)…`)
+        const delay = Math.min(5000 * Math.pow(2, tries), 60000)
+        console.log(`Rate limited on ${path}, waiting ${delay / 1000}s (attempt ${tries + 1}/10)…`)
         await new Promise((r) => setTimeout(r, delay))
         continue
       }
@@ -93,7 +93,7 @@ export async function versatureFetch(path: string) {
     }
   }
 
-  throw new Error(`Versature request rate-limited too many times for ${path}`)
+  throw new Error(`Versature request rate-limited too many times (10 attempts) for ${path}`)
 }
 
 export async function fetchAllPages<T>(path: string) {

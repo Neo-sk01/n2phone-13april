@@ -1,12 +1,12 @@
 import { formatInTimeZone } from 'date-fns-tz'
 import { startOfMonth, endOfMonth, subMonths, format, eachDayOfInterval } from 'date-fns'
-import { getDomainCdrs, getQueueStats } from '@/lib/versature/endpoints'
+import { getQueueStats } from '@/lib/versature/endpoints'
 import { ENGLISH_QUEUE_ID, FRENCH_QUEUE_ID, AI_OVERFLOW_QUEUE_IDS } from '@/lib/versature/queues'
 import { getDashboardData } from '@/lib/kpis/get-dashboard-data'
-import { syncDay } from '@/lib/versature/sync'
+import { syncMonthQueueData } from '@/lib/versature/sync'
 import { getPool } from './db'
 import { fetchTickets } from '@/lib/connectwise/client'
-import { upsertCDRBatch, upsertQueueStats, upsertTicketBatch, upsertKPISnapshot, upsertBhKpiSnapshot, type QueueStatsRow } from './upsert'
+import { upsertQueueStats, upsertTicketBatch, upsertKPISnapshot, upsertBhKpiSnapshot, type QueueStatsRow } from './upsert'
 
 const TZ = 'America/Toronto'
 
@@ -106,33 +106,16 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
     })
     const totalDays = days.length
 
-    // === FETCH CDRs (0-30%) ===
-    const allCdrs: Awaited<ReturnType<typeof getDomainCdrs>> = []
-
-    for (let i = 0; i < days.length; i++) {
-      const dayStr = format(days[i], 'yyyy-MM-dd')
-      const pct = Math.round((i / totalDays) * 30)
-      await updateProgress(month, pct, `Fetching CDRs for ${dayStr}…`, totalDays)
-
-      console.log(`[pull] Fetching CDRs for ${dayStr}…`)
-      const dayCdrs = await getDomainCdrs(dayStr, dayStr)
-      allCdrs.push(...dayCdrs)
-      console.log(`[pull]   → ${dayCdrs.length} CDRs`)
-      await sleep(3000)
-    }
-
-    console.log(`[pull] Upserting ${allCdrs.length} CDRs…`)
-    await updateProgress(month, 30, `Upserting ${allCdrs.length} CDRs…`)
-    await upsertCDRBatch(allCdrs, month)
-
-    // === FETCH QUEUE STATS (30-40%) ===
+    // === FETCH QUEUE STATS (0-10%) ===
+    // CDR fetch is skipped — KPIs #1-9 come from queue stats/splits.
+    // KPI #10 (hourly avg call length) requires CDRs and is deferred.
     const queueIds = [ENGLISH_QUEUE_ID, FRENCH_QUEUE_ID, ...AI_OVERFLOW_QUEUE_IDS]
     let queueStatsCount = 0
 
     for (let i = 0; i < queueIds.length; i++) {
       const qid = queueIds[i]
-      const pct = 30 + Math.round(((i + 1) / queueIds.length) * 10)
-      await updateProgress(month, pct, `Fetching queue stats for ${qid}…`)
+      const pct = Math.round(((i + 1) / queueIds.length) * 10)
+      await updateProgress(month, pct, `Fetching queue stats for ${qid}…`, totalDays)
 
       console.log(`[pull] Fetching queue stats for ${qid}…`)
       try {
@@ -147,9 +130,9 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
       await sleep(500)
     }
 
-    // === FETCH CONNECTWISE TICKETS (40-55%) ===
+    // === FETCH CONNECTWISE TICKETS (10-25%) ===
     let tickets: Awaited<ReturnType<typeof fetchTickets>> = []
-    await updateProgress(month, 42, 'Fetching ConnectWise tickets…')
+    await updateProgress(month, 12, 'Fetching ConnectWise tickets…')
     console.log(`[pull] Fetching ConnectWise tickets…`)
 
     try {
@@ -157,7 +140,7 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
       console.log(`[pull]   → ${tickets.length} tickets`)
 
       if (tickets.length > 0) {
-        await updateProgress(month, 50, `Upserting ${tickets.length} tickets…`)
+        await updateProgress(month, 20, `Upserting ${tickets.length} tickets…`)
         await upsertTicketBatch(tickets, month)
       }
     } catch (err) {
@@ -165,28 +148,15 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
       console.warn('[pull] ConnectWise ticket fetch failed (non-fatal):', err)
     }
 
-    await updateProgress(month, 55, 'Syncing into Part 1 tables…')
-
-    // === SYNC INTO PART 1 TABLES (55-80%) ===
-    console.log(`[pull] Syncing into Part 1 tables for KPI computation…`)
-    const failedDays: string[] = []
-    for (let i = 0; i < days.length; i++) {
-      const dayStr = format(days[i], 'yyyy-MM-dd')
-      const pct = 55 + Math.round(((i + 1) / totalDays) * 25)
-      await updateProgress(month, pct, `Syncing ${dayStr}…`)
-
-      try {
-        await syncDay(days[i])
-      } catch (err) {
-        failedDays.push(dayStr)
-        console.warn(`[pull] syncDay failed for ${dayStr}:`, err)
-      }
-      await sleep(3000)
-    }
-
-    if (failedDays.length > 0) {
-      throw new Error(`syncDay failed for ${failedDays.length} day(s): ${failedDays.join(', ')}`)
-    }
+    // === SYNC INTO PART 1 TABLES (25-80%) ===
+    // Fetch month-wide daily splits per queue (one request each), then fan them
+    // out into queue_splits and queue_stats_daily. The per-day stats endpoint
+    // 500s on single-day queries, so we use the month-wide splits to seed
+    // queue_stats_daily with per-day volume numbers.
+    console.log(`[pull] Fetching month-wide daily splits for KPI computation…`)
+    await syncMonthQueueData(startDate, endDate, (msg) => {
+      void updateProgress(month, 50, msg, totalDays)
+    })
 
     // === COMPUTE KPI SNAPSHOTS (80-95%) ===
     await updateProgress(month, 82, 'Computing KPI snapshots…')
@@ -217,7 +187,7 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
     await updateProgress(month, 95, 'Finalizing…')
 
     const recordCounts = {
-      cdrs: allCdrs.length,
+      cdrs: 0,
       queueStats: queueStatsCount,
       tickets: tickets.length,
     }

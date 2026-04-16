@@ -29,7 +29,10 @@ export function PullDataButton() {
 
   const checkStatus = useCallback((month: string) => {
     fetch(`/api/jobs/monthly-pull/status?month=${month}`)
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then(setPullStatus)
       .catch(() => setPullStatus({ status: 'not_pulled', month }))
   }, [])
@@ -60,6 +63,11 @@ export function PullDataButton() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month: targetMonth }),
       })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setPullStatus({ status: 'failed', month: targetMonth, error: body.error ?? `HTTP ${res.status}` })
+        return
+      }
       const data = await res.json()
       setPullStatus(data)
     } catch {
@@ -87,7 +95,7 @@ export function PullDataButton() {
         })
       : ''
     return (
-      <span className="text-xs text-slate-500">
+      <span className="text-xs text-lime-400/50">
         {label} pulled {pulledAt}
       </span>
     )
@@ -97,7 +105,7 @@ export function PullDataButton() {
     return (
       <button
         disabled
-        className="rounded-full border border-slate-300 bg-slate-100 px-4 py-2 text-sm text-slate-500"
+        className="rounded-full border border-lime-800 bg-lime-900/30 px-4 py-2 text-sm text-lime-400/60"
       >
         Pulling... ({mins}m {secs}s)
       </button>
@@ -108,7 +116,7 @@ export function PullDataButton() {
     return (
       <button
         onClick={handlePull}
-        className="rounded-full bg-red-600 px-4 py-2 text-sm text-white"
+        className="rounded-full bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-500"
       >
         Pull failed — Retry?
       </button>
@@ -120,12 +128,12 @@ export function PullDataButton() {
       <button
         onClick={handlePull}
         disabled={pullStatus === null}
-        className="rounded-full border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+        className="rounded-full border border-lime-800 px-4 py-2 text-sm text-lime-300 hover:bg-lime-900/30 disabled:opacity-50"
       >
         Pull {label} Data
       </button>
       <select
-        className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600"
+        className="rounded-lg border border-lime-800 bg-[#0a0a0a] px-2 py-1.5 text-xs text-lime-300"
         value={targetMonth}
         onChange={(e) => setTargetMonth(e.target.value)}
         aria-label="Select month to pull"

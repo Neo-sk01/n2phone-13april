@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const invalidateAccessToken = vi.fn()
 
@@ -8,6 +8,11 @@ vi.mock('@/lib/versature/auth', () => ({
 }))
 
 describe('versatureFetch', () => {
+  beforeEach(() => {
+    invalidateAccessToken.mockClear()
+    vi.resetModules()
+  })
+
   test('retries once on 401', async () => {
     const fetchMock = vi
       .fn()

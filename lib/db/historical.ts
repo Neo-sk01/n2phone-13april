@@ -13,7 +13,7 @@ export async function detectHistoricalMonth(
   startDate: string,
   endDate: string,
 ): Promise<string | null> {
-  // Must start on the 1st
+  // Must start on the 1st (accepts yyyy-MM-dd or yyyy-MM-ddTHH:mm:ss)
   const startMatch = startDate.match(/^(\d{4}-\d{2})-01/)
   if (!startMatch) return null
 
@@ -24,7 +24,7 @@ export async function detectHistoricalMonth(
   const monthEnd = endOfMonth(new Date(year, mo - 1, 1))
   const dd = String(monthEnd.getDate()).padStart(2, '0')
 
-  // endDate must cover the full last day
+  // endDate must be the last day of the same month
   if (!endDate.startsWith(`${month}-${dd}`)) return null
 
   // Must be strictly before the current Eastern month

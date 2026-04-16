@@ -5,3 +5,4 @@ job-runner/node_modules
 .env
 coverage
 *.log
+.superpowers/

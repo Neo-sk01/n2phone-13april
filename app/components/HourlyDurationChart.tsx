@@ -9,9 +9,9 @@ export function HourlyDurationChart({
 }) {
   return (
     <LineChart width={640} height={260} data={data}>
-      <XAxis dataKey="hour" />
-      <YAxis />
-      <Line type="monotone" dataKey="average_seconds" stroke="#0f172a" strokeWidth={2} />
+      <XAxis dataKey="hour" stroke="#3f6212" tick={{ fill: '#a3e635' }} />
+      <YAxis stroke="#3f6212" tick={{ fill: '#a3e635' }} />
+      <Line type="monotone" dataKey="average_seconds" stroke="#84cc16" strokeWidth={2} dot={{ fill: '#a3e635' }} />
     </LineChart>
   )
 }

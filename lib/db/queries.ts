@@ -216,15 +216,22 @@ export async function getWeekdaySplitRowsForPeriod(
   period: { start: Date; end: Date },
   options: { includeWeekends?: boolean } = {},
 ) {
+  // Aggregate volume across all queues per calendar date first,
+  // then return one row per date with the total volume and weekday label.
+  // This ensures KPI #9 averages "total calls per day-of-week", not "per queue-row".
   const result = await getPool().query(
     `
-      select to_char(interval_start at time zone 'America/Toronto', 'Dy') as weekday,
-             volume
-      from queue_splits
-      where split_period = 'day'
-        and interval_start >= $1
-        and interval_start <= $2
-        and ($3::boolean or extract(isodow from interval_start at time zone 'America/Toronto') between 1 and 5)
+      select weekday, volume from (
+        select (interval_start at time zone 'America/Toronto')::date as cal_date,
+               to_char(interval_start at time zone 'America/Toronto', 'Dy') as weekday,
+               sum(volume) as volume
+        from queue_splits
+        where split_period = 'day'
+          and interval_start >= $1
+          and interval_start <= $2
+          and ($3::boolean or extract(isodow from interval_start at time zone 'America/Toronto') between 1 and 5)
+        group by cal_date, to_char(interval_start at time zone 'America/Toronto', 'Dy')
+      ) daily
     `,
     [period.start.toISOString(), period.end.toISOString(), options.includeWeekends ?? false],
   )

@@ -6,12 +6,9 @@ import { getLastSuccessfulIngestAt } from '@/lib/db/queries'
 import { detectHistoricalMonth, readKPISnapshot } from '@/lib/db/historical'
 import { getPeriodRange } from '@/lib/utils/dates'
 import { formatDuration } from '@/lib/utils/format'
+import { formatInTimeZone } from 'date-fns-tz'
 import Link from 'next/link'
-import dynamic from 'next/dynamic'
-
-const LanguageSplitChart = dynamic(() => import('./components/LanguageSplitChart').then(m => ({ default: m.LanguageSplitChart })), { ssr: false })
-const HourlyDurationChart = dynamic(() => import('./components/HourlyDurationChart').then(m => ({ default: m.HourlyDurationChart })), { ssr: false })
-const DayOfWeekChart = dynamic(() => import('./components/DayOfWeekChart').then(m => ({ default: m.DayOfWeekChart })), { ssr: false })
+import { LanguageSplitChart, HourlyDurationChart, DayOfWeekChart } from './components/Charts'
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>
 
@@ -26,8 +23,8 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
   let isHistorical = false
   try {
     const historicalMonth = await detectHistoricalMonth(
-      range.start.toISOString().slice(0, 19),
-      range.end.toISOString().slice(0, 19),
+      formatInTimeZone(range.start, 'America/Toronto', 'yyyy-MM-dd'),
+      formatInTimeZone(range.end, 'America/Toronto', 'yyyy-MM-dd'),
     )
     if (historicalMonth) {
       const snapshot = await readKPISnapshot(historicalMonth)
@@ -49,24 +46,27 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
   return (
     <main className="mx-auto flex max-w-7xl flex-col gap-8 px-6 py-8">
       <header className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">CSH Dashboard</h1>
-          <p className="mt-2 text-sm text-slate-600">Period: {range.label}</p>
-          {isHistorical ? (
-            <p className="mt-1 inline-block rounded-full bg-slate-200 px-3 py-1 text-xs font-medium text-slate-700">
-              Showing historical data for {range.label}
-            </p>
-          ) : (
-            <p className="mt-1 text-xs text-slate-500">
-              Last refreshed: {lastRefreshed ?? 'No completed sync yet'}
-            </p>
-          )}
+        <div className="flex items-center gap-4">
+          <img src="/neolore-logo.svg" alt="NeoLore" className="h-10 w-auto" />
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight text-lime-50">CSH Dashboard</h1>
+            <p className="mt-2 text-sm text-lime-300/70">Period: {range.label}</p>
+            {isHistorical ? (
+              <p className="mt-1 inline-block rounded-full bg-lime-900/40 px-3 py-1 text-xs font-medium text-lime-300">
+                Showing historical data for {range.label}
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-lime-400/50">
+                Last refreshed: {lastRefreshed ?? 'No completed sync yet'}
+              </p>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <PeriodToggle current={period} includeWeekends={includeWeekends} />
           <Link
             href={`/?period=${period}${includeWeekends ? '' : '&includeWeekends=true'}`}
-            className="rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-600"
+            className="rounded-full border border-lime-800 px-4 py-2 text-sm text-lime-300 hover:bg-lime-900/30"
           >
             {includeWeekends ? 'Exclude Weekends' : 'Include Weekends'}
           </Link>
@@ -74,7 +74,7 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
           <form action="/api/refresh" method="post">
             <input type="hidden" name="startDate" value={range.start.toISOString().slice(0, 10)} />
             <input type="hidden" name="endDate" value={range.end.toISOString().slice(0, 10)} />
-            <button className="rounded-full bg-slate-900 px-4 py-2 text-sm text-white" type="submit">
+            <button className="rounded-full bg-lime-500 px-4 py-2 text-sm font-medium text-black hover:bg-lime-400" type="submit">
               Refresh
             </button>
           </form>
@@ -91,18 +91,18 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
         <KpiCard label="Short Calls (&lt;10s)" value={String(data.shortCalls.totalShortCalls)} />
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5">
+      <section className="rounded-2xl border border-lime-800/40 bg-[#111411] p-5">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">Avg Call Length by Queue</h2>
-            <p className="mt-1 text-sm text-slate-600">Queue-stats talk time, shown separately to keep all four queues readable.</p>
+            <h2 className="text-lg font-semibold text-lime-50">Avg Call Length by Queue</h2>
+            <p className="mt-1 text-sm text-lime-300/60">Queue-stats talk time, shown separately to keep all four queues readable.</p>
           </div>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {data.kpi8.rows.map((row: { queue_id: string; average_seconds: number }) => (
-            <div key={row.queue_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{row.queue_id}</p>
-              <p className="mt-2 text-2xl font-semibold text-slate-900">
+            <div key={row.queue_id} className="rounded-2xl border border-lime-800/30 bg-[#0a0a0a] p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-lime-400/60">{row.queue_id}</p>
+              <p className="mt-2 text-2xl font-semibold text-lime-400">
                 {formatDuration(row.average_seconds)}
               </p>
             </div>
@@ -111,8 +111,8 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5">
-          <h2 className="text-lg font-semibold">Language Split</h2>
+        <div className="rounded-2xl border border-lime-800/40 bg-[#111411] p-5">
+          <h2 className="text-lg font-semibold text-lime-50">Language Split</h2>
           <LanguageSplitChart
             data={[
               { name: 'English', value: data.kpi7.englishPct },
@@ -122,21 +122,21 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
             ]}
           />
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5">
-          <h2 className="text-lg font-semibold">Avg Call Length per Hour</h2>
+        <div className="rounded-2xl border border-lime-800/40 bg-[#111411] p-5">
+          <h2 className="text-lg font-semibold text-lime-50">Avg Call Length per Hour</h2>
           <HourlyDurationChart data={data.kpi10.series} />
         </div>
         {period === 'this-month' ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 lg:col-span-2">
-            <h2 className="text-lg font-semibold">Avg Calls per Day-of-Week</h2>
+          <div className="rounded-2xl border border-lime-800/40 bg-[#111411] p-5 lg:col-span-2">
+            <h2 className="text-lg font-semibold text-lime-50">Avg Calls per Day-of-Week</h2>
             <DayOfWeekChart data={data.kpi9.series} />
           </div>
         ) : null}
       </section>
 
-      <section className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5">
-        <h2 className="text-lg font-semibold">AI Voice Assist Health</h2>
-        <p className="mt-2 text-sm text-slate-600">Reserved for Part 2 after Part 1 manual validation.</p>
+      <section className="rounded-2xl border border-dashed border-lime-800/40 bg-[#111411] p-5">
+        <h2 className="text-lg font-semibold text-lime-300">AI Voice Assist Health</h2>
+        <p className="mt-2 text-sm text-lime-300/60">Reserved for Part 2 after Part 1 manual validation.</p>
       </section>
     </main>
   )

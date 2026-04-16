@@ -3,8 +3,8 @@ export const TARGET_DNIS = [
   process.env.DNIS_SECONDARY!,
 ] as const
 
-function stripPrefix(value: string) {
-  return value.replace(/^\+/, '')
+function stripPrefix(value: string | undefined) {
+  return (value ?? '').replace(/^\+/, '')
 }
 
 export function isDnisMatch(value: string) {
