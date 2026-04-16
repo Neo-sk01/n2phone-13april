@@ -61,19 +61,35 @@ describe('fetchTickets', () => {
     expect(fields).toContain('contact/phoneNumber')
   })
 
-  test('logs and stops pagination on non-OK response', async () => {
-    const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
+  test('throws on non-OK response on the first page', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' }),
+      vi.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      }),
     )
 
     const { fetchTickets } = await import('@/lib/connectwise/client')
-    const tickets = await fetchTickets('2026-03-01', '2026-03-31')
+    await expect(fetchTickets('2026-03-01', '2026-03-31')).rejects.toThrow(/500/)
+  })
 
-    expect(tickets).toHaveLength(0)
-    expect(consoleSpy).toHaveBeenCalled()
-    consoleSpy.mockRestore()
+  test('throws on a non-OK mid-pagination page instead of returning partial data', async () => {
+    // This is the data-safety case: if we silently returned `page1` here,
+    // the correlation runner would DELETE all matches for the month and
+    // rebuild them from an incomplete ticket set, destroying valid matches.
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: i, summary: `t-${i}` }))
+
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, json: async () => page1 })
+        .mockResolvedValueOnce({ ok: false, status: 502, statusText: 'Bad Gateway' }),
+    )
+
+    const { fetchTickets } = await import('@/lib/connectwise/client')
+    await expect(fetchTickets('2026-03-01', '2026-03-31')).rejects.toThrow(/502/)
   })
 })

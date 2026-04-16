@@ -36,8 +36,14 @@ export async function fetchTickets(
     const response = await fetch(url, { headers })
 
     if (!response.ok) {
-      console.warn(`[connectwise] Request failed (${response.status}) on page ${page} — stopping pagination`)
-      break
+      // Fail closed. Silently returning a partial list would let downstream
+      // code (runner.ts full-replace) delete valid correlations and rebuild
+      // from an incomplete ticket set. The caller is expected to catch this
+      // and mark the month as degraded rather than trust partial data.
+      throw new Error(
+        `[connectwise] fetchTickets failed on page ${page}: ` +
+          `${response.status} ${response.statusText}`,
+      )
     }
 
     const data = (await response.json()) as ConnectWiseTicket[]
