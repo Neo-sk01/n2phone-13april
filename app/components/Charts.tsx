@@ -16,3 +16,8 @@ export const DayOfWeekChart = dynamic(
   () => import('./DayOfWeekChart').then((m) => ({ default: m.DayOfWeekChart })),
   { ssr: false },
 )
+
+export const SlaComplianceChart = dynamic(
+  () => import('./SlaComplianceChart').then((m) => ({ default: m.SlaComplianceChart })),
+  { ssr: false },
+)
