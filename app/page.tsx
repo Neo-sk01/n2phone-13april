@@ -6,6 +6,7 @@ import { getLastSuccessfulIngestAt } from '@/lib/db/queries'
 import { detectHistoricalMonth, readKPISnapshot } from '@/lib/db/historical'
 import { getPeriodRange } from '@/lib/utils/dates'
 import { formatDuration } from '@/lib/utils/format'
+import { toTorontoDateString } from '@/lib/utils/dates'
 import { formatInTimeZone } from 'date-fns-tz'
 import Link from 'next/link'
 import { LanguageSplitChart, HourlyDurationChart, DayOfWeekChart } from './components/Charts'
@@ -73,8 +74,8 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
           </Link>
           <PullDataButton />
           <form action="/api/refresh" method="post">
-            <input type="hidden" name="startDate" value={range.start.toISOString().slice(0, 10)} />
-            <input type="hidden" name="endDate" value={range.end.toISOString().slice(0, 10)} />
+            <input type="hidden" name="startDate" value={toTorontoDateString(range.start)} />
+            <input type="hidden" name="endDate" value={toTorontoDateString(range.end)} />
             <button className="rounded-full bg-lime-500 px-4 py-2 text-sm font-medium text-black hover:bg-lime-400" type="submit">
               Refresh
             </button>

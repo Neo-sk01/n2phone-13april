@@ -1,10 +1,13 @@
 import { eachDayOfInterval } from 'date-fns'
 import { NextRequest, NextResponse } from 'next/server'
 import { syncDay } from '@/lib/versature/sync'
+import { toTorontoDateString } from '@/lib/utils/dates'
 
 export async function POST(request: NextRequest) {
   const contentType = request.headers.get('content-type') ?? ''
-  let startDate = new Date().toISOString().slice(0, 10)
+  // Default to "today" in Toronto, not UTC. slice(0,10) of a UTC ISO is off
+  // by one from roughly 19:00 EST / 20:00 EDT onward.
+  let startDate = toTorontoDateString(new Date())
   let endDate = startDate
 
   if (contentType.includes('application/json')) {
