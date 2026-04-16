@@ -7,7 +7,7 @@ import { syncMonthQueueData } from '@/lib/versature/sync'
 import { getPool } from './db'
 import { fetchTickets } from '@/lib/connectwise/client'
 import { getCdrsForUsers } from '@/lib/versature/cdrs-users'
-import { runMonthlyCorrelation } from '@/lib/connectwise/runner'
+import { monthToTicketWindow, runMonthlyCorrelation } from '@/lib/connectwise/runner'
 import { computeAiHealthStatus, stripAiHealthKpis } from './ai-health-status'
 import {
   upsertQueueStats,
@@ -171,12 +171,23 @@ export async function runMonthlyPull(targetMonth?: string): Promise<PullResult> 
     }
 
     // === FETCH CONNECTWISE TICKETS (22-33%) ===
+    // Fetch tickets for the same Toronto-aware padded window the correlation
+    // runner reads. Otherwise boundary-month tickets (e.g. Apr 1 01:30 for a
+    // Mar 31 23:58 call) never land in the DB and the boundary matcher has
+    // nothing to correlate against on a first-pass pull.
+    const ticketWindow = monthToTicketWindow(month)
     let tickets: Awaited<ReturnType<typeof fetchTickets>> = []
     await updateProgress(month, 24, 'Fetching ConnectWise tickets…')
-    console.log(`[pull] Fetching ConnectWise tickets…`)
+    console.log(
+      `[pull] Fetching ConnectWise tickets ${ticketWindow.start.toISOString()}` +
+        ` → ${ticketWindow.end.toISOString()}…`,
+    )
 
     try {
-      tickets = await fetchTickets(startDate, endDate)
+      tickets = await fetchTickets(
+        ticketWindow.start.toISOString(),
+        ticketWindow.end.toISOString(),
+      )
       console.log(`[pull]   → ${tickets.length} tickets`)
 
       if (tickets.length > 0) {

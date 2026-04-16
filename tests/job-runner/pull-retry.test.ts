@@ -32,11 +32,19 @@ vi.mock('@/lib/connectwise/client', () => ({
 vi.mock('@/lib/versature/cdrs-users', () => ({
   getCdrsForUsers: vi.fn().mockResolvedValue([]),
 }))
-vi.mock('@/lib/connectwise/runner', () => ({
-  runMonthlyCorrelation: vi
-    .fn()
-    .mockResolvedValue({ candidates: 0, matched: 0, exact: 0, fuzzy: 0 }),
-}))
+vi.mock('@/lib/connectwise/runner', async () => {
+  // Use the real monthToTicketWindow — the test is verifying that pull.ts
+  // actually passes its output to fetchTickets.
+  const actual = await vi.importActual<typeof import('@/lib/connectwise/runner')>(
+    '@/lib/connectwise/runner',
+  )
+  return {
+    ...actual,
+    runMonthlyCorrelation: vi
+      .fn()
+      .mockResolvedValue({ candidates: 0, matched: 0, exact: 0, fuzzy: 0 }),
+  }
+})
 vi.mock('@/lib/versature/sync', () => ({
   syncMonthQueueData: vi.fn().mockResolvedValue(undefined),
 }))
@@ -98,6 +106,42 @@ describe('runMonthlyPull short-circuit behavior', () => {
     expect(poolQueryMock).toHaveBeenCalledTimes(2)
     const casSql = String(poolQueryMock.mock.calls[1][0])
     expect(casSql).toMatch(/INSERT INTO monthly_pull_log/i)
+  })
+
+  test('fetchTickets is called with the padded boundary window, not bare month dates', async () => {
+    poolQueryMock
+      .mockResolvedValueOnce({ rows: [] })                // existing pull_log lookup
+      .mockResolvedValueOnce({ rows: [{ id: 1 }] })       // CAS insert
+      .mockResolvedValue({ rows: [] })                    // everything else during the run
+
+    connectMock.mockResolvedValue({
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+      release: vi.fn(),
+    })
+
+    // Use the mock instance AFTER module reset so the spy is the one the
+    // pull code actually calls.
+    const { fetchTickets } = await import('@/lib/connectwise/client')
+    const fetchTicketsSpy = vi.mocked(fetchTickets)
+    fetchTicketsSpy.mockResolvedValue([])
+
+    const { runMonthlyPull } = await import('../../job-runner/pull')
+
+    try {
+      await runMonthlyPull('2026-03')
+    } catch {
+      // The mocked pipeline can't complete; we only care about the fetch args.
+    }
+
+    expect(fetchTicketsSpy).toHaveBeenCalled()
+    const [startArg, endArg] = fetchTicketsSpy.mock.calls[0] as [string, string]
+    // Must encode the Toronto-aware padded boundary window from
+    // monthToTicketWindow('2026-03'): start 2026-03-01T04:00:00.000Z
+    // (Toronto Feb 28 23:00 EST) and end 2026-04-01T07:59:59.999Z
+    // (Toronto Mar 31 23:59:59 EDT + 4h). Bare month dates like
+    // "2026-03-01"/"2026-03-31" would leave boundary tickets unfetched.
+    expect(startArg).toBe('2026-03-01T04:00:00.000Z')
+    expect(endArg).toBe('2026-04-01T07:59:59.999Z')
   })
 
   test('falls through to rerun when ai_health_status is unknown (legacy rows)', async () => {
