@@ -192,9 +192,20 @@ export async function getAverageTalkTimes(
   options: { includeWeekends?: boolean } = {},
 ) {
   // stats_date is stored as the Toronto business date requested from Versature.
+  // Volume-weighted mean: sum(talk_time * offered) / sum(offered). A naive
+  // avg(average_talk_time) would be an average-of-averages that ignores day-
+  // to-day volume differences.
   const result = await getPool().query(
     `
-      select queue_id, round(avg(average_talk_time))::int as average_seconds
+      select
+        queue_id,
+        coalesce(
+          round(
+            sum(average_talk_time::numeric * calls_offered)
+            / nullif(sum(calls_offered), 0)
+          )::int,
+          0
+        ) as average_seconds
       from queue_stats_daily
       where stats_date between $1::date and $2::date
         and ($3::boolean or extract(isodow from stats_date) between 1 and 5)
