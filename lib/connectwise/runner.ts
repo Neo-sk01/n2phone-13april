@@ -97,28 +97,34 @@ export async function runMonthlyCorrelation(
   const rows = correlateAll(calls, tickets)
   const matched = rows.filter((r) => r.ticketId !== null)
 
-  for (let i = 0; i < matched.length; i += BATCH) {
-    const chunk = matched.slice(i, i + BATCH)
-    const client = await pool.connect()
-    try {
-      await client.query('BEGIN')
+  // Full-replace semantics: delete every correlation for this month, then
+  // insert the current run's matches. This is the only way to drop stale
+  // rows when a previous run's match no longer holds (e.g. the ticket got
+  // merged, the call's phone changed, or the ticket's phone changed). The
+  // (cdr_id, month) PK guarantees at most one active match per call.
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      'DELETE FROM connectwise_correlations WHERE month = $1',
+      [month],
+    )
+    for (let i = 0; i < matched.length; i += BATCH) {
+      const chunk = matched.slice(i, i + BATCH)
       for (const r of chunk) {
         await client.query(
           `INSERT INTO connectwise_correlations (cdr_id, month, ticket_id, confidence, reason)
-           VALUES ($1,$2,$3,$4,$5)
-           ON CONFLICT (cdr_id, month, ticket_id) DO UPDATE SET
-             confidence = EXCLUDED.confidence,
-             reason     = EXCLUDED.reason`,
+           VALUES ($1,$2,$3,$4,$5)`,
           [r.cdrId, month, r.ticketId, r.confidence, r.reason],
         )
       }
-      await client.query('COMMIT')
-    } catch (err) {
-      await client.query('ROLLBACK')
-      throw err
-    } finally {
-      client.release()
     }
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
   }
 
   return {

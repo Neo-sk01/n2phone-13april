@@ -67,6 +67,10 @@ describe('runMonthlyCorrelation', () => {
       .mockResolvedValueOnce({ rows: [] })  // ai_candidate_calls
       .mockResolvedValueOnce({ rows: [] })  // tickets
 
+    // Full-replace wraps writes in a pool.connect() transaction even when
+    // there are zero matches, so the test needs to mock the client path too.
+    connectMock.mockResolvedValueOnce({ query: vi.fn().mockResolvedValue({}), release: vi.fn() })
+
     const { runMonthlyCorrelation } = await import('@/lib/connectwise/runner')
     await runMonthlyCorrelation('2026-03')
 
@@ -82,6 +86,97 @@ describe('runMonthlyCorrelation', () => {
     expect(ticketsParams[1]).toBeInstanceOf(Date)
     expect((ticketsParams[0] as Date).toISOString()).toBe('2026-03-01T04:00:00.000Z')
     expect((ticketsParams[1] as Date).toISOString()).toBe('2026-04-01T07:59:59.999Z')
+  })
+
+  test('replaces all correlations for the month on rerun (full replacement)', async () => {
+    queryMock
+      .mockResolvedValueOnce({ rows: [] })  // calls
+      .mockResolvedValueOnce({ rows: [] })  // tickets
+
+    const writeMock = vi.fn().mockResolvedValue({})
+    const releaseMock = vi.fn()
+    connectMock.mockResolvedValueOnce({ query: writeMock, release: releaseMock })
+
+    const { runMonthlyCorrelation } = await import('@/lib/connectwise/runner')
+    await runMonthlyCorrelation('2026-03')
+
+    const writeStatements = writeMock.mock.calls.map((c) => String(c[0]))
+    const deleteIdx = writeStatements.findIndex((s) =>
+      /DELETE\s+FROM\s+connectwise_correlations/i.test(s),
+    )
+    expect(deleteIdx).toBeGreaterThanOrEqual(0)
+    // The delete must run inside a transaction — BEGIN must come first.
+    const beginIdx = writeStatements.findIndex((s) => /^\s*BEGIN/i.test(s))
+    expect(beginIdx).toBeGreaterThanOrEqual(0)
+    expect(beginIdx).toBeLessThan(deleteIdx)
+    // Delete is scoped to the month being rerun, not the whole table.
+    const deleteCall = writeMock.mock.calls[deleteIdx]
+    expect(deleteCall[1]).toEqual(['2026-03'])
+    expect(releaseMock).toHaveBeenCalled()
+  })
+
+  test('drops stale rows when a call no longer matches on rerun', async () => {
+    // First run: one call, one ticket → one correlation.
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            cdr_id: 'c1',
+            normalized_phone: '14165550100',
+            start_time: new Date('2026-03-15T10:00:00Z'),
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 10,
+            normalized_phone: '14165550100',
+            date_entered: new Date('2026-03-15T10:05:00Z'),
+          },
+        ],
+      })
+    const firstWrite = vi.fn().mockResolvedValue({})
+    connectMock.mockResolvedValueOnce({ query: firstWrite, release: vi.fn() })
+
+    const { runMonthlyCorrelation } = await import('@/lib/connectwise/runner')
+    const first = await runMonthlyCorrelation('2026-03')
+    expect(first.matched).toBe(1)
+    expect(firstWrite.mock.calls.some((c) =>
+      /INSERT INTO connectwise_correlations/i.test(String(c[0])),
+    )).toBe(true)
+
+    // Rerun: same call, but ticket phone no longer matches → no correlation.
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            cdr_id: 'c1',
+            normalized_phone: '14165550100',
+            start_time: new Date('2026-03-15T10:00:00Z'),
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 10,
+            normalized_phone: '14165559999',  // phone changed
+            date_entered: new Date('2026-03-15T10:05:00Z'),
+          },
+        ],
+      })
+    const secondWrite = vi.fn().mockResolvedValue({})
+    connectMock.mockResolvedValueOnce({ query: secondWrite, release: vi.fn() })
+
+    const second = await runMonthlyCorrelation('2026-03')
+    expect(second.matched).toBe(0)
+
+    // Full-replace semantics: the delete must still run even when there are
+    // no new matches to insert, otherwise the old row survives.
+    const stmts = secondWrite.mock.calls.map((c) => String(c[0]))
+    expect(stmts.some((s) => /DELETE\s+FROM\s+connectwise_correlations/i.test(s))).toBe(true)
+    expect(stmts.some((s) => /INSERT INTO connectwise_correlations/i.test(s))).toBe(false)
   })
 
   test('correlates a Mar 31 call to an Apr 1 ticket (boundary case)', async () => {
