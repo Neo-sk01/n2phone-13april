@@ -27,19 +27,37 @@ interface Kpi14 {
   p90Minutes: number
 }
 
+export type AiHealthStatus = 'complete' | 'degraded' | 'unknown'
+
 export function VoiceAssistHealth({
   kpi11,
   kpi12,
   kpi13,
   kpi14,
+  aiHealthStatus,
 }: {
-  kpi11: Kpi11
-  kpi12: Kpi12
-  kpi13: Kpi13
-  kpi14: Kpi14
+  // All four KPIs are optional. When the snapshot was written for a degraded
+  // month the backend strips them, and when a legacy snapshot predates Part 2
+  // they were never there. Either way, we render an explicit unavailable
+  // state instead of fabricated zeros.
+  kpi11?: Kpi11
+  kpi12?: Kpi12
+  kpi13?: Kpi13
+  kpi14?: Kpi14
+  aiHealthStatus?: AiHealthStatus
 }) {
   const pct = (n: number) => `${(n * 100).toFixed(1)}%`
   const minutes = (n: number) => `${Math.round(n)}m`
+
+  // Any missing KPI or a non-complete health status is treated as unavailable.
+  // If Part 1 succeeded and AI-health ran cleanly, the snapshot carries all
+  // four KPIs and aiHealthStatus === 'complete'.
+  const degraded =
+    !kpi11 ||
+    !kpi12 ||
+    !kpi13 ||
+    !kpi14 ||
+    (aiHealthStatus !== undefined && aiHealthStatus !== 'complete')
 
   return (
     <section className="rounded-2xl border border-lime-800/40 bg-[#111411] p-5">
@@ -52,6 +70,70 @@ export function VoiceAssistHealth({
         </InfoButton>
       </div>
 
+      {degraded ? (
+        <DegradedState status={aiHealthStatus} />
+      ) : (
+        <HealthyContent kpi11={kpi11!} kpi12={kpi12!} kpi13={kpi13!} kpi14={kpi14!} pct={pct} minutes={minutes} />
+      )}
+    </section>
+  )
+}
+
+function DegradedState({ status }: { status?: AiHealthStatus }) {
+  const label =
+    status === 'degraded'
+      ? 'AI-health data is unavailable for this period.'
+      : status === 'unknown'
+        ? 'AI-health data was not tracked for this period.'
+        : 'AI-health data is unavailable.'
+  const detail =
+    status === 'degraded'
+      ? 'One or more ingestion stages (AI CDRs, ConnectWise tickets, correlation) failed during the last pull. Use the Repair button above to re-run the pull and recover these metrics.'
+      : 'This period was pulled before the AI-health pipeline was tracked. Re-pull the month to populate these metrics.'
+
+  return (
+    <>
+      <p className="mt-1 text-xs text-amber-300/80">{label}</p>
+      <div className="mt-4 rounded-2xl border border-amber-700/40 bg-amber-950/20 p-4 text-sm text-amber-200/80">
+        {detail}
+      </div>
+      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <UnavailableCard label="Correlation Rate" />
+        <UnavailableCard label="Uncorrelated AI Calls" />
+        <UnavailableCard label="SLA Compliance (24h)" />
+        <UnavailableCard label="Median Resolution Time" />
+      </div>
+    </>
+  )
+}
+
+function UnavailableCard({ label }: { label: string }) {
+  return (
+    <article className="rounded-2xl border border-lime-800/30 bg-[#111411] p-5">
+      <p className="text-sm text-lime-300/60">{label}</p>
+      <p className="mt-3 text-3xl font-semibold text-lime-400/40">—</p>
+      <p className="mt-2 text-xs text-lime-400/40">Data unavailable</p>
+    </article>
+  )
+}
+
+function HealthyContent({
+  kpi11,
+  kpi12,
+  kpi13,
+  kpi14,
+  pct,
+  minutes,
+}: {
+  kpi11: Kpi11
+  kpi12: Kpi12
+  kpi13: Kpi13
+  kpi14: Kpi14
+  pct: (n: number) => string
+  minutes: (n: number) => string
+}) {
+  return (
+    <>
       <p className="mt-1 text-xs text-lime-400/60">
         Correlation is heuristic (phone + time window). Treat numbers as indicative, not exact.
       </p>
@@ -113,6 +195,6 @@ export function VoiceAssistHealth({
           </div>
         </div>
       </div>
-    </section>
+    </>
   )
 }

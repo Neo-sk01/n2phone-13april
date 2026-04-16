@@ -16,7 +16,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   try {
     const result = await getPool().query(
-      'SELECT status, started_at, completed_at, record_counts, error, progress_pct, progress_message, total_pages FROM monthly_pull_log WHERE month = $1',
+      `SELECT status, started_at, completed_at, record_counts, error,
+              progress_pct, progress_message, total_pages, ai_health_status
+         FROM monthly_pull_log
+        WHERE month = $1`,
       [month],
     )
 
@@ -25,7 +28,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     const row = result.rows[0]
-    const rc = row.record_counts as { cdrs: number; queueStats: number; tickets: number } | null
+    const rc = row.record_counts as
+      | { cdrs: number; queueStats: number; tickets: number; correlations?: number }
+      | null
 
     // Mark stale jobs: if in_progress for > 30 minutes, flag as potentially stale
     let stale = false
@@ -44,6 +49,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       progressPct: row.progress_pct ?? 0,
       progressMessage: row.progress_message ?? undefined,
       totalPages: row.total_pages ?? undefined,
+      aiHealthStatus: (row.ai_health_status as 'complete' | 'degraded' | 'unknown' | null) ?? undefined,
       stale,
     })
   } catch {

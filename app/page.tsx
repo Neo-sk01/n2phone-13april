@@ -136,17 +136,19 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
         ) : null}
       </section>
 
+      {/*
+        Degraded historical snapshots have kpi11..14 stripped by the pull, so
+        we pass them through as-possibly-undefined. VoiceAssistHealth renders
+        an explicit unavailable state instead of fabricated zeros. The
+        aiHealthStatus field comes from the snapshot payload (see pull.ts).
+      */}
       <VoiceAssistHealth
-        kpi11={data.kpi11 ?? { candidates: 0, matched: 0, exact: 0, fuzzy: 0, rate: 0 }}
-        kpi12={data.kpi12 ?? { totalUnmatched: 0, byQueue: [], sample: [] }}
-        kpi13={
-          data.kpi13 ?? {
-            overall: { resolved: 0, met: 0, open: 0, rate: 0 },
-            daily: [],
-          }
-        }
-        kpi14={
-          data.kpi14 ?? { count: 0, meanMinutes: 0, medianMinutes: 0, p90Minutes: 0 }
+        kpi11={data.kpi11}
+        kpi12={data.kpi12}
+        kpi13={data.kpi13}
+        kpi14={data.kpi14}
+        aiHealthStatus={
+          (data as { aiHealthStatus?: 'complete' | 'degraded' | 'unknown' }).aiHealthStatus
         }
       />
     </main>

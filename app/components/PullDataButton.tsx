@@ -4,10 +4,18 @@ import { useState, useEffect, useCallback } from 'react'
 import { formatInTimeZone } from 'date-fns-tz'
 import { subMonths, startOfMonth } from 'date-fns'
 
+type AiHealthStatus = 'complete' | 'degraded' | 'unknown'
+
 type PullStatus =
   | { status: 'not_pulled'; month: string }
   | { status: 'in_progress'; month: string; startedAt?: string }
-  | { status: 'completed' | 'already_pulled'; month: string; pulledAt?: string; recordCounts?: { cdrs: number; queueStats: number; tickets: number } }
+  | {
+      status: 'completed' | 'already_pulled'
+      month: string
+      pulledAt?: string
+      recordCounts?: { cdrs: number; queueStats: number; tickets: number; correlations?: number }
+      aiHealthStatus?: AiHealthStatus
+    }
   | { status: 'failed'; month: string; error?: string }
 
 function getPreviousMonth(): string {
@@ -94,6 +102,31 @@ export function PullDataButton() {
           minute: '2-digit',
         })
       : ''
+
+    // Degraded: one or more AI-health stages failed on the last pull. The
+    // pull_log is flagged `degraded`, kpi11..14 are absent from the snapshot,
+    // and the backend will accept a rerun to recover. Offer a repair action.
+    // `unknown` is the legacy state for rows pulled before ai_health_status
+    // was tracked — treat the same as degraded so operators can repull.
+    const healthy = pullStatus.aiHealthStatus === 'complete'
+    if (!healthy) {
+      const healthLabel =
+        pullStatus.aiHealthStatus === 'degraded'
+          ? 'AI-health degraded'
+          : 'AI-health unknown'
+      return (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePull}
+            className="rounded-full border border-amber-700/60 bg-amber-950/40 px-4 py-2 text-sm text-amber-300 hover:bg-amber-900/40"
+            title={`Pulled ${pulledAt}. Click to repull and recover AI-health data.`}
+          >
+            Repair {label} ({healthLabel})
+          </button>
+        </div>
+      )
+    }
+
     return (
       <span className="text-xs text-lime-400/50">
         {label} pulled {pulledAt}
