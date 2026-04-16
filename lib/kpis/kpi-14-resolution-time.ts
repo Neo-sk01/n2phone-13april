@@ -3,15 +3,18 @@ import { getPool } from '@/lib/db/client'
 export async function computeKpi14(period: { start: Date; end: Date }) {
   const pool = getPool()
   const { rows } = await pool.query(
+    // Tickets joined by id only so boundary-month correlations aren't dropped;
+    // DISTINCT ON (t.id) collapses duplicate ticket rows across month partitions.
     `WITH correlated_resolved AS (
-       SELECT DISTINCT t.id,
+       SELECT DISTINCT ON (t.id) t.id,
               extract(epoch FROM (t.resolved_date_time - t.date_entered)) / 60 AS minutes
          FROM connectwise_correlations cc
-         JOIN tickets t ON t.id = cc.ticket_id AND t.month = cc.month
+         JOIN tickets t ON t.id = cc.ticket_id
          JOIN ai_candidate_calls a
            ON a.cdr_id = cc.cdr_id AND a.month = cc.month
         WHERE a.start_time >= $1 AND a.start_time <= $2
           AND t.resolved_date_time IS NOT NULL
+        ORDER BY t.id, t.month DESC
      )
      SELECT COUNT(*)::int                                                  AS count,
             AVG(minutes)                                                    AS mean_minutes,
